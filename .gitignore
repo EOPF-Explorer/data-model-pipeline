@@ -214,6 +214,7 @@ uv.lock
 
 *.zarr
 .DS_Store
-out
-runs
+.work/
+out/
+runs/
 *.gz

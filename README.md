@@ -43,6 +43,17 @@ flowchart LR
 
 ## Quickstart
 
+### One-shot apply
+```bash
+make apply PORTABLE=1   # build + load + argo-install + template
+```
+
+### Faster dev loop
+```bash
+make dev   # build + load + template (skip argo install)
+```
+
+
 ```bash
 # 0) Build the image (uses data-model@<ref> lockfile, then installs eopf-geozarr with --no-deps)
 make build REF=<commit-sha-or-tag> TAG=dev
@@ -54,10 +65,7 @@ make argo-install
 
 # 2) Apply the WorkflowTemplate and submit a run
 make template
-make submit \
-  STAC_URL="https://…/S2B_MSIL2A_20250518…zarr" \
-  OUTPUT_ZARR="./S2B_MSIL2A_20250518_T29RLL_geozarr.zarr" \
-  GROUPS="measurements/reflectance/r20m"
+make submit   STAC_URL="https://…/S2B_MSIL2A_20250518…zarr"   OUTPUT_ZARR="./S2B_MSIL2A_20250518_T29RLL_geozarr.zarr"   GROUPS="measurements/reflectance/r20m"
 
 # 3) Fetch artifacts (tarball + optional dask-report.html) from the PVC
 make fetch-tar
@@ -75,13 +83,21 @@ Artifacts land under `runs/<workflow-name>/`.
 - `workflows/geozarr-convert-template.yaml`
   - Preflight (HEAD) the STAC URL (best-effort; non-fatal).
   - Normalize/echo groups; validate with xarray (prints tree; fails early with suggestions).
-  - Run `eopf-geozarr convert … --dask-cluster --dask-perf-html …`.
+  - Run `eopf-geozarr convert …`. The template now uses POSIX-safe `echo` for command tracing (instead of `printf %q`).
   - Tar the GeoZarr into `/outputs/geozarr.tar.gz`; expose artifacts from PVC.
 - `Makefile` — build → load/push → argo install → template → submit → fetch → clean.
 
 ---
 
 ## Build options
+
+- By default builds now use **stable tags** (`IMMUTABLE=0`) and **cached layers** (`NC=0`, `PULL=0`).
+- To force an immutable timestamp tag:
+  ```bash
+  make build IMMUTABLE=1
+  ```
+
+### Variants
 
 ```bash
 # Default (wheel-first): fast, small image
@@ -112,10 +128,7 @@ From `workflows/geozarr-convert-template.yaml`:
 
 Override via env on submit:
 ```bash
-make submit \
-  STAC_URL="https://…" \
-  OUTPUT_ZARR="./S2B_MSIL2A_…_geozarr.zarr" \
-  GROUPS="/measurements/reflectance/r20m /measurements/reflectance/r10m"
+make submit   STAC_URL="https://…"   OUTPUT_ZARR="./S2B_MSIL2A_…_geozarr.zarr"   GROUPS="/measurements/reflectance/r20m /measurements/reflectance/r10m"
 ```
 
 ---
@@ -191,7 +204,7 @@ make clean-pvc
 
 - Publish CI workflow that builds `:sha` and `:main` images on push.
 - Add a sample STAC catalog and golden-test to smoke the template offline.
-- Optionally publish a Helm chart wrapping the WorkflowTemplate + RBAC + imagePullSecrets.
+- Publish a Helm chart wrapping the WorkflowTemplate + RBAC + imagePullSecrets.
 - Parameterize Dask cluster settings (threads/memory) in the template.
 - (If needed) toggle a “no-tar” mode to emit a directory tree directly to PVC.
 

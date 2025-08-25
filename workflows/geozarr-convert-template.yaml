@@ -1,3 +1,4 @@
+
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -24,7 +25,7 @@ spec:
       - name: groups
         value: "/measurements/reflectance/r10m /measurements/reflectance/r20m /measurements/reflectance/r60m"
       - name: dask_perf_html
-        value: "out/debug/dask-report-threads.html"
+        value: ""
 
   templates:
     - name: run-convert
@@ -59,7 +60,7 @@ spec:
 
           case "$STAC" in *…*|*...*) echo "ERROR: stac_url contains ellipsis"; exit 64;; esac
 
-          mkdir -p "$OUTDIR" "$(dirname "$PERF")"
+          mkdir -p "$OUTDIR"
 
           echo "=== preflight ==="
           echo "stac_url=$STAC"
@@ -84,70 +85,58 @@ spec:
 
           # Validate groups early with xarray
           python - "$STAC" $GROUPS <<'PY'
-          import sys, xarray as xr
+          import re, sys, xarray as xr
 
-          def iter_children(node):
-              groups = getattr(node, "groups", None)
-              if isinstance(groups, dict):
-                  yield from groups.items()
-              elif isinstance(groups, (list, tuple)):
-                  for name in groups:
-                      try:
-                          yield name, node[name]
-                      except Exception:
-                          pass
-              else:
-                  children = getattr(node, "children", None)
-                  if isinstance(children, dict):
-                      yield from children.items()
-
-          if len(sys.argv) < 2:
-              print("no args passed to validation; skipping"); sys.exit(0)
           stac, *groups = sys.argv[1:]
-          dt = xr.open_datatree(stac, engine="zarr", consolidated=None)
+          if any(re.fullmatch(r"\d+", g.strip()) for g in groups):
+              print("ERROR: 'groups' must be paths like /measurements/reflectance/r20m (got numeric token).")
+              sys.exit(64)
 
-          print("=== available groups ===")
-          def walk(node, prefix=""):
-              path = prefix or "/"
-              print(path)
-              for name, child in iter_children(node):
-                  newp = f"{prefix}/{name}" if prefix else f"/{name}"
-                  walk(child, newp)
-          walk(dt)
+          def open_dt(url):
+              try:
+                  return xr.open_datatree(url, engine="zarr", consolidated=True)
+              except Exception:
+                  return xr.open_datatree(url, engine="zarr", consolidated=None)
 
-          bad = []
+          dt = open_dt(stac)
+          missing = []
           for g in groups:
               key = g.strip("/")
               try:
                   _ = dt[key]
+                  print(f"[ok] {g}")
               except Exception as e:
-                  print(f"[error] {g}: {e}")
-                  bad.append(g)
-          if bad:
+                  print(f"[missing] {g}: {e}")
+                  missing.append(g)
+
+          if missing:
               try:
                   meas = dt["measurements"]
-                  print("candidates under /measurements:")
-                  for name, _child in iter_children(meas):
-                      print("  /measurements/" + name)
+                  names = set()
+                  children = getattr(meas, "groups", None) or getattr(meas, "children", None)
+                  if isinstance(children, dict):
+                      names.update(children.keys())
+                  elif isinstance(children, (list, tuple)):
+                      for s in children:
+                          if isinstance(s, str) and s:
+                              names.add(s.split("/", 1)[0])
+                  if names:
+                      print("candidates under /measurements:")
+                      for n in sorted(names)[:50]:
+                          print("  /measurements/" + n)
               except Exception:
                   pass
               sys.exit(64)
           PY
-
           echo "=== convert ==="
-          set -x
-          eopf-geozarr convert \
-            --dask-cluster \
-            --dask-perf-html "$PERF" \
-            "$STAC" \
-            "$OUT" \
-            --verbose \
-            $(for g in $GROUPS; do printf -- ' --groups %s' "$g"; done)
-          set +x
+          set -- convert --dask-cluster --verbose "$STAC" "$OUT"
+          for g in $GROUPS; do
+            set -- "$@" --groups "$g"
+          done
 
-          cp -f "$PERF" "$OUTDIR/dask-report.html" 2>/dev/null || true
+          echo "cmd: eopf-geozarr $*"
 
-          echo "=== package artifact ==="
+          eopf-geozarr "$@"
           tar -czf "$OUTDIR/geozarr.tar.gz" -C "$(dirname "$OUT")" "$(basename "$OUT")"
 
         resources:
@@ -160,7 +149,5 @@ spec:
 
       outputs:
         artifacts:
-          - name: dask-report
-            path: "{{inputs.parameters.dask_perf_html}}"
           - name: geozarr-tar
             path: /outputs/geozarr.tar.gz
