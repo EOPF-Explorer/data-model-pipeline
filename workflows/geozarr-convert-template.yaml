@@ -1,153 +1,46 @@
-
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: geozarr-convert
-  namespace: argo
 spec:
-  entrypoint: run-convert
-
-  volumeClaimTemplates:
-    - metadata:
-        name: outpvc
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 10Gi
-
+  entrypoint: geozarr-convert
+  serviceAccountName: default
   arguments:
     parameters:
+      - name: image
+        value: "eopf-geozarr:dev"
+      - name: pvc_name
+        value: "geozarr-pvc"
       - name: stac_url
-        value: "https://objectstore.eodc.eu:2222/e05ab01a9d56408d82ac32d69a5aae2a:202505-s02msil2a/18/products/cpm_v256/S2B_MSIL2A_20250518T112119_N0511_R037_T29RLL_20250518T140519.zarr"
+        value: "https://example.invalid/in.zarr"
       - name: output_zarr
-        value: "./S2B_MSIL2A_20250518_T29RLL_geozarr.zarr"
+        value: "/data/out.zarr"
       - name: groups
-        value: "/measurements/reflectance/r10m /measurements/reflectance/r20m /measurements/reflectance/r60m"
-      - name: dask_perf_html
-        value: ""
-
+        value: "measurements/reflectance/r20m"
+      - name: validate_groups
+        value: "false"
   templates:
-    - name: run-convert
-      volumes:
-        - name: tmp
-          emptyDir: {}
-
+    - name: geozarr-convert
       inputs:
         parameters:
+          - name: image
+          - name: pvc_name
           - name: stac_url
           - name: output_zarr
           - name: groups
-          - name: dask_perf_html
-
-      script:
-        image: eopf-geozarr:dev  
+          - name: validate_groups
+      container:
+        image: "{{inputs.parameters.image}}"
         imagePullPolicy: IfNotPresent
-        command: ["sh", "-lc"]
+        command: [bash, -lc]
+        args:
+          - |
+            set -euo pipefail
+            bash /app/scripts/convert.sh               --stac-url "{{inputs.parameters.stac_url}}"               --output-zarr "{{inputs.parameters.output_zarr}}"               --groups "{{inputs.parameters.groups}}"               --validate-groups "{{inputs.parameters.validate_groups}}"
         volumeMounts:
-          - name: tmp
-            mountPath: /tmp
-          - name: outpvc
-            mountPath: /outputs
-        source: |
-          set -euo pipefail
-
-          STAC="{{inputs.parameters.stac_url}}"
-          OUT="{{inputs.parameters.output_zarr}}"
-          GROUPS_RAW="{{inputs.parameters.groups}}"
-          PERF="{{inputs.parameters.dask_perf_html}}"
-          OUTDIR="/outputs"
-
-          case "$STAC" in *…*|*...*) echo "ERROR: stac_url contains ellipsis"; exit 64;; esac
-
-          mkdir -p "$OUTDIR"
-
-          echo "=== preflight ==="
-          echo "stac_url=$STAC"
-          if command -v curl >/dev/null 2>&1; then
-            (curl -sI --max-time 8 "$STAC" | head -n1) || true
-          elif command -v wget >/dev/null 2>&1; then
-            (wget -qS --spider "$STAC" 2>&1 | head -n1) || true
-          else
-            echo "(no curl/wget in image; skipping HEAD)"
-          fi
-
-          # Normalize group paths
-          NORM_GROUPS=""
-          for g in $GROUPS_RAW; do
-            [ -z "$g" ] && continue
-            case "$g" in /*) NORM="$g";; *) NORM="/$g";; esac
-            NORM="$(printf "%s" "$NORM" | sed 's#//*#/#g')"
-            NORM_GROUPS="$NORM_GROUPS $NORM"
-          done
-          GROUPS="$(printf "%s" "$NORM_GROUPS" | sed 's/^ *//')"
-          echo "groups(norm)=$GROUPS"
-
-          # Validate groups early with xarray
-          python - "$STAC" $GROUPS <<'PY'
-          import re, sys, xarray as xr
-
-          stac, *groups = sys.argv[1:]
-          if any(re.fullmatch(r"\d+", g.strip()) for g in groups):
-              print("ERROR: 'groups' must be paths like /measurements/reflectance/r20m (got numeric token).")
-              sys.exit(64)
-
-          def open_dt(url):
-              try:
-                  return xr.open_datatree(url, engine="zarr", consolidated=True)
-              except Exception:
-                  return xr.open_datatree(url, engine="zarr", consolidated=None)
-
-          dt = open_dt(stac)
-          missing = []
-          for g in groups:
-              key = g.strip("/")
-              try:
-                  _ = dt[key]
-                  print(f"[ok] {g}")
-              except Exception as e:
-                  print(f"[missing] {g}: {e}")
-                  missing.append(g)
-
-          if missing:
-              try:
-                  meas = dt["measurements"]
-                  names = set()
-                  children = getattr(meas, "groups", None) or getattr(meas, "children", None)
-                  if isinstance(children, dict):
-                      names.update(children.keys())
-                  elif isinstance(children, (list, tuple)):
-                      for s in children:
-                          if isinstance(s, str) and s:
-                              names.add(s.split("/", 1)[0])
-                  if names:
-                      print("candidates under /measurements:")
-                      for n in sorted(names)[:50]:
-                          print("  /measurements/" + n)
-              except Exception:
-                  pass
-              sys.exit(64)
-          PY
-          echo "=== convert ==="
-          set -- convert --dask-cluster --verbose "$STAC" "$OUT"
-          for g in $GROUPS; do
-            set -- "$@" --groups "$g"
-          done
-
-          echo "cmd: eopf-geozarr $*"
-
-          eopf-geozarr "$@"
-          tar -czf "$OUTDIR/geozarr.tar.gz" -C "$(dirname "$OUT")" "$(basename "$OUT")"
-
-        resources:
-          requests:
-            cpu: "1"
-            memory: "2Gi"
-          limits:
-            cpu: "4"
-            memory: "8Gi"
-
-      outputs:
-        artifacts:
-          - name: geozarr-tar
-            path: /outputs/geozarr.tar.gz
+          - name: data
+            mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: "{{inputs.parameters.pvc_name}}"
