@@ -36,7 +36,11 @@ spec:
         args:
           - |
             set -euo pipefail
-            bash /app/scripts/convert.sh               --stac-url "{{inputs.parameters.stac_url}}"               --output-zarr "{{inputs.parameters.output_zarr}}"               --groups "{{inputs.parameters.groups}}"               --validate-groups "{{inputs.parameters.validate_groups}}"
+            bash /app/scripts/convert.sh \
+              --stac-url "{{inputs.parameters.stac_url}}" \
+              --output-zarr "{{inputs.parameters.output_zarr}}" \
+              --groups "{{inputs.parameters.groups}}" \
+              --validate-groups "{{inputs.parameters.validate_groups}}"
         volumeMounts:
           - name: data
             mountPath: /data

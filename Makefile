@@ -20,13 +20,22 @@ PYTHON ?= python3
 PARAMS_FILE ?= params.json
 ARGO_PROXY_PORT ?= 8081
 K8S_PROXY_PORT ?= 8001
+KUBECONFIG_FILE ?= .work/kubeconfig
+
+# Export local kubeconfig so kubectl/argo consistently target the right API endpoint
+export KUBECONFIG := $(abspath $(KUBECONFIG_FILE))
 
 .PHONY: up up-fast up-rebuild build rebuild image-import ensure-pvc template apply submit logs logs-pod pod fetch status down env doctor validate
+.PHONY: ui-reset-client ui-reset-server ui-proxy-bg ui-proxy-stop ui-diagnose
 
-up: bootstrap cluster argo-install build image-import ensure-pvc template submit
+.PHONY: kubeconfig
+kubeconfig:
+	@bash scripts/fix_kubeconfig.sh $(CLUSTER) $(KUBECONFIG_FILE)
+
+up: bootstrap cluster kubeconfig argo-install build image-import ensure-pvc template submit
 	# full local run: bootstrap → cluster → argo → build → import → pvc → template → submit
 
-up-fast: build image-import template submit
+up-fast: kubeconfig build image-import template submit
 
 up-rebuild:
 	$(MAKE) rebuild
@@ -132,7 +141,7 @@ doctor:
 	@echo "jq:        $$(jq --version 2>/dev/null || echo 'optional (we use Python)')"
 
 .PHONY: argo-install
-argo-install:
+argo-install: kubeconfig
 	# install argo workflows CRDs + controller (pinned v3.6.5)
 	@echo "Installing Argo Workflows $(ARGO_VER) into namespace $(NAMESPACE)..."
 	@kubectl get namespace $(NAMESPACE) >/dev/null 2>&1 || kubectl create namespace $(NAMESPACE)
@@ -171,6 +180,10 @@ help:
 	@echo "  ui-mode-client  Default token-based mode"
 	@echo "  ui-pf-stop      Stop background port-forward"
 	@echo "  ui-k8s-proxy    (Optional) Start kubectl API proxy; then use the printed link"
+	@echo "  ui-proxy-bg     (Optional) Start local auth-injecting HTTP proxy (prints link)"
+	@echo "  ui-proxy-stop   Stop the local auth-injecting proxy"
+	@echo "  ui-reset-client Force client+secure mode, refresh, and open a working link"
+	@echo "  ui-reset-server Force server (no login), then port-forward to 2746"
 	@echo ""
 	@echo "Useful vars (override as needed):"
 	@echo "  NAMESPACE=argo PVC_NAME=geozarr-pvc IMAGE=eopf-geozarr:dev ARGO_VER=v3.6.5"
@@ -245,20 +258,7 @@ ui-forward:
 
 .PHONY: ui-open
 ui-open:
-	@TOKEN=$$(kubectl -n $(NAMESPACE) create token argo-ui-dev --duration=1h 2>/dev/null || kubectl -n $(NAMESPACE) create token argo-server --duration=1h 2>/dev/null || true); \
-	URL=https://127.0.0.1:2746; \
-	if [ -n "$$TOKEN" ]; then \
-	  echo "Opening $$URL with token..."; \
-	  open "$$URL/auth/token?token=$$TOKEN" || true; \
-	  echo "If the page doesn't auto-auth, paste the token from below:"; \
-	  echo $$TOKEN; \
-	  echo "Alt link forms:"; \
-	  echo "  $$URL/?token=$$TOKEN"; \
-	  echo "  $$URL/#/?token=$$TOKEN"; \
-	else \
-	  echo "Open $$URL in your browser. If prompted, mint a token with:"; \
-	  echo "  kubectl -n $(NAMESPACE) create token argo-server"; \
-	fi
+	@$(PYTHON) scripts/print_ui_link.py -n $(NAMESPACE) --open
 
 .PHONY: ui-pf-stop
 ui-pf-stop:
@@ -281,7 +281,7 @@ ui-mode-server:
 .PHONY: ui-mode-client
 ui-mode-client:
 	@echo "Switching argo-server auth mode to 'client' (default token-based)..."
-	@$(PYTHON) scripts/argo_set_auth_mode.py --namespace $(NAMESPACE) --mode client
+	@ARGO_SET_SECURE=true $(PYTHON) scripts/argo_set_auth_mode.py --namespace $(NAMESPACE) --mode client
 	kubectl -n $(NAMESPACE) rollout status deploy/argo-server
 	@echo "Done. Use 'make ui-open' to login with a token."
 
@@ -308,6 +308,42 @@ ui-k8s-proxy-stop:
 	else \
 	  echo "No kubectl proxy pidfile found."; \
 	fi
+
+# Start auth-injecting local HTTP proxy (optional)
+.PHONY: ui-proxy-bg
+ui-proxy-bg:
+	@mkdir -p .work
+	@echo "Starting auth-injecting Argo UI proxy on http://127.0.0.1:$(ARGO_PROXY_PORT) ..."
+	@nohup $(PYTHON) scripts/argo_ui_proxy.py --namespace $(NAMESPACE) --port $(ARGO_PROXY_PORT) >/dev/null 2>&1 & echo $$! > .work/argo_ui_proxy.pid
+	@echo "http://127.0.0.1:$(ARGO_PROXY_PORT)" > .work/argo_ui_proxy.port
+	@echo "Argo UI proxy at http://127.0.0.1:$(ARGO_PROXY_PORT) (Authorization header injected)."
+
+.PHONY: ui-proxy-stop
+ui-proxy-stop:
+	@if [ -f .work/argo_ui_proxy.pid ]; then \
+	  PID=$$(cat .work/argo_ui_proxy.pid); \
+	  echo "Stopping Argo UI proxy (pid $$PID)..."; \
+	  kill $$PID || true; \
+	  rm -f .work/argo_ui_proxy.pid .work/argo_ui_proxy.port; \
+	else \
+	  echo "No Argo UI proxy pidfile found."; \
+	fi
+
+# One-shot recovery helpers for common blank/unauthorized UI issues
+.PHONY: ui-reset-client
+ui-reset-client: ui-pf-stop ui-k8s-proxy-stop ui-proxy-stop
+	@echo "Setting argo-server to client auth mode with secure HTTPS..."
+	@ARGO_SET_SECURE=true $(PYTHON) scripts/argo_set_auth_mode.py --namespace $(NAMESPACE) --mode client
+	kubectl -n $(NAMESPACE) rollout status deploy/argo-server
+	@$(PYTHON) scripts/print_ui_link.py -n $(NAMESPACE) --open
+
+.PHONY: ui-reset-server
+ui-reset-server: ui-pf-stop ui-k8s-proxy-stop ui-proxy-stop
+	@echo "Setting argo-server to server auth mode (no login, http)..."
+	@ARGO_SET_SECURE=false $(PYTHON) scripts/argo_set_auth_mode.py --namespace $(NAMESPACE) --mode server
+	kubectl -n $(NAMESPACE) rollout status deploy/argo-server
+	@echo "Opening local dashboard at http://127.0.0.1:2746"
+	@ARGO_UI_SCHEME=http $(PYTHON) scripts/print_ui_link.py -n $(NAMESPACE) --open
 
 
 .PHONY: validate

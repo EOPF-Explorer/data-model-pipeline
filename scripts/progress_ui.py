@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-# Non-repetitive progress UI with side-panel Argo UI info.
+"""
+Stream converter logs, print a compact progress summary, and show the Argo UI URL.
+
+This script starts (or reuses) a local HTTP proxy that injects Authorization headers
+for the Argo UI, then prints its URL (http://127.0.0.1:<port>). No kubectl port-forwarding
+or token juggling is needed—open the printed link and you are in.
+"""
 
 import re
 import sys
@@ -35,10 +41,12 @@ last_sig = None
 
 
 def short(s, n=96):
+    """Return s truncated to n characters with an ellipsis for tidy, one-line output."""
     return (s[: n - 1] + "…") if s and len(s) > n else s
 
 
 def sig():
+    """Stable fingerprint of the current progress state to avoid noisy reprints."""
     g = tuple(state["groups"][-3:])
     b = tuple(sorted(list(state["bands"]))[-10:])
     o = tuple(sorted(int(x) for x in state["overviews"]))
@@ -47,6 +55,7 @@ def sig():
 
 
 def render():
+    """Print a non-repetitive, readable summary of the ongoing conversion."""
     global last_sig
     s = sig()
     if s == last_sig:
@@ -81,224 +90,79 @@ def render():
     print("\n".join(lines), flush=True)
 
 
-def _find_free_port(preferred: int) -> int:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            if s.connect_ex(("127.0.0.1", preferred)) != 0:
-                return preferred
-    except Exception:
-        pass
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+## We exclusively rely on a local auth-injecting HTTP proxy for the Argo UI.
 
 
-def _pf_files():
+def _start_auth_proxy_bg(ns: str) -> str | None:
+    """Start or reuse the local Argo UI proxy.
+
+    Returns:
+        The proxy URL (e.g., "http://127.0.0.1:<port>") when ready, otherwise None.
+    """
     work = os.path.join(os.getcwd(), ".work")
-    return work, os.path.join(work, "argo_pf.port"), os.path.join(work, "argo_pf.pid")
-
-
-def _k8s_proxy_files():
-    work = os.path.join(os.getcwd(), ".work")
-    return work, os.path.join(work, "kubectl_proxy.port"), os.path.join(work, "kubectl_proxy.pid")
-
-
-def _start_port_forward_bg(ns: str, target_port: int = 2746) -> int:
-    work, port_file, pid_file = _pf_files()
     os.makedirs(work, exist_ok=True)
-    # Reuse existing if alive
+    port_file = os.path.join(work, "argo_ui_proxy.port")
+    # Fast path: if the port file exists and the port is open, reuse it.
     try:
-        if os.path.exists(port_file) and os.path.exists(pid_file):
+        if os.path.exists(port_file):
             with open(port_file, "r", encoding="utf-8") as f:
-                lp = int(f.read().strip())
-            with open(pid_file, "r", encoding="utf-8") as f:
-                pid = int(f.read().strip())
-            # Check if process alive and port accepting
-            if pid > 0:
+                p = f.read().strip()
+            if p.isdigit():
                 try:
-                    os.kill(pid, 0)
-                    with socket.create_connection(("127.0.0.1", lp), timeout=0.2):
-                        return lp
+                    with socket.create_connection(("127.0.0.1", int(p)), timeout=0.3):
+                        return f"http://127.0.0.1:{p}"
                 except Exception:
                     pass
     except Exception:
         pass
-    # Start a new background port-forward
-    local_port = int(os.environ.get("ARGO_UI_PORT", "2746"))
-    local_port = _find_free_port(local_port)
-    cmd = [
-        "kubectl",
-        "-n",
-        ns,
-        "port-forward",
-        "svc/argo-server",
-        f"{local_port}:{target_port}",
-    ]
+    # Launch the proxy in the background.
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
-        # Wait briefly for readiness
+        subprocess.Popen(
+            ["python3", "scripts/argo_ui_proxy.py", "--namespace", ns],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # Wait up to 5s for the proxy to write its port file and accept connections.
         t0 = time.time()
-        ready = False
         while time.time() - t0 < 5:
-            if proc.poll() is not None:
-                break
-            try:
-                with socket.create_connection(("127.0.0.1", local_port), timeout=0.2):
-                    ready = True
-                    break
-            except Exception:
-                time.sleep(0.1)
-        if ready:
-            with open(port_file, "w", encoding="utf-8") as f:
-                f.write(str(local_port))
-            with open(pid_file, "w", encoding="utf-8") as f:
-                f.write(str(proc.pid))
-        return local_port
-    except Exception:
-        return local_port
-
-
-def _get_bearer_token(ns: str):
-    # Prefer Kubernetes SA token (works without argo cli context)
-    try:
-        out = subprocess.check_output(
-            ["kubectl", "-n", ns, "create", "token", "argo-ui-dev", "--duration=1h"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        if out:
-            return out
-    except Exception:
-        # fallback to argo-server SA
-        try:
-            out = subprocess.check_output(
-                ["kubectl", "-n", ns, "create", "token", "argo-server", "--duration=1h"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-            if out:
-                return out
-        except Exception:
-            pass
-    # Fallback to `argo auth token`
-    try:
-        out = subprocess.check_output(
-            ["argo", "auth", "token", "-n", ns],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        if out:
-            return out
+            if os.path.exists(port_file):
+                try:
+                    with open(port_file, "r", encoding="utf-8") as f:
+                        p = f.read().strip()
+                    if p.isdigit():
+                        with socket.create_connection(("127.0.0.1", int(p)), timeout=0.5):
+                            return f"http://127.0.0.1:{p}"
+                except Exception:
+                    pass
+            time.sleep(0.1)
     except Exception:
         pass
     return None
 
 
-def _probe_scheme(host: str, port: int, token: str) -> str:
-    # Try HTTP first, then HTTPS (skip cert verify)
-    try:
-        subprocess.run(
-            [
-                "curl",
-                "-sSfk",
-                "-H",
-                f"Authorization: Bearer {token}",
-                f"http://{host}:{port}/api/v1/info",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-        return "http"
-    except Exception:
-        pass
-    try:
-        subprocess.run(
-            [
-                "curl",
-                "-sSfk",
-                "-H",
-                f"Authorization: Bearer {token}",
-                f"https://{host}:{port}/api/v1/info",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-        return "https"
-    except Exception:
-        pass
-    # Fall back to env or http
-    return os.environ.get("ARGO_UI_SCHEME", "http")
+## No token minting or scheme probing here; the proxy handles auth and routing.
 
 
 def _print_side_info():
+    """Print the Argo UI URL served by the local auth-injecting proxy."""
     ns = os.environ.get("NAMESPACE", "argo")
-    # If user provides a local HTTP proxy URL explicitly, prefer it and stop.
+    # Respect ARGO_UI_PROXY_URL if the proxy is already exposed by another process.
     proxy_url = os.environ.get("ARGO_UI_PROXY_URL")
     if proxy_url:
         print("🔗 Argo UI (via local HTTP proxy):")
         print(f"   {proxy_url}")
-        print("   Auth is handled by the proxy. No token shown.")
+        print("   Auth is handled by the proxy.")
         return
-    # Provide official port-forward link only (no tokens shown by default)
-    host = os.environ.get("ARGO_UI_HOST", "127.0.0.1")
-    target_port = 2746
-    try:
-        p = subprocess.check_output(
-            [
-                "kubectl",
-                "-n",
-                ns,
-                "get",
-                "svc",
-                "argo-server",
-                "-o",
-                "jsonpath={.spec.ports[0].port}",
-            ],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        if p:
-            target_port = int(p)
-    except Exception:
-        pass
 
-    local_port = _start_port_forward_bg(ns, target_port)
-    token = _get_bearer_token(ns)
-    # Determine http/https by probing /api/v1/info. Prefer http when --secure=false is set on server.
-    scheme = _probe_scheme(host, local_port, token or "")
-    url = f"{scheme}://{host}:{local_port}"
-    print("🔗 Argo UI (official port-forward):")
-    print(f"   {url}")
-    # Only show token links if explicitly requested
-    if os.environ.get("ARGO_SHOW_TOKEN_LINKS", "0").lower() in ("1", "true", "yes") and token:
-        print("   Link with token:")
-        print(f"     {url}/auth/token?token={token}")
-        print(f"     {url}/?token={token}")
-        print(f"     {url}/#/?token={token}")
+    # Start or reuse the proxy and print its URL.
+    proxy = _start_auth_proxy_bg(ns)
+    print("🔗 Argo UI (via local HTTP proxy):")
+    if proxy:
+        print(f"   {proxy}")
+        print("   Auth is handled by the proxy.")
+        return
 
-    # Also print optional API proxy URL if a kubectl proxy is detected (we no longer auto-start it)
-    if os.environ.get("ARGO_SHOW_ALT_LINKS", "0").lower() in ("1", "true", "yes"):
-        try:
-            kportfile = os.path.join(os.getcwd(), ".work", "kubectl_proxy.port")
-            if os.path.exists(kportfile):
-                with open(kportfile, "r", encoding="utf-8") as f:
-                    kp = f.read().strip()
-                if kp.isdigit():
-                    print(
-                        "   Alt (API proxy): http://127.0.0.1:",
-                        kp,
-                        f"/api/v1/namespaces/{ns}/services/https:argo-server:web/proxy/",
-                        sep="",
-                    )
-        except Exception:
-            pass
-
-    # Prefer local HTTP auth-injecting proxy if running
+    # Fallback: print a URL from the existing port file, if present.
     try:
         portfile = os.path.join(os.getcwd(), ".work", "argo_ui_proxy.port")
         if os.path.exists(portfile):
@@ -306,23 +170,17 @@ def _print_side_info():
                 p = f.read().strip()
             if p.isdigit():
                 url = f"http://127.0.0.1:{p}"
-                print("🔗 Argo UI (via local HTTP proxy):")
                 print(f"   {url}")
                 print("   Auth is handled by the proxy.")
                 return
     except Exception:
         pass
 
-    # Fallback (kept for completeness; official flow above already printed):
-    ns = os.environ.get("NAMESPACE", "argo")
-    host = os.environ.get("ARGO_UI_HOST", "127.0.0.1")
-    scheme = "https"
-    url = f"{scheme}://{host}:{local_port}"
-    print("🔗 Argo UI:")
-    print(f"   {url}")
+    # Last resort: give a short, actionable hint.
+    print("   (Proxy did not start. Ensure the cluster is up, then run: make ui-open)")
 
 
-# We leave the port-forward running in background for a stable URL; provide a Make target to stop it.
+# The local proxy runs in the background and is reused across runs.
 
 _printed_side = False
 
