@@ -50,32 +50,6 @@ The goal of this document is to pass all *relevant operational context* and *des
   ```
 - `Makefile` — streamlined targets: `build`, `load-k3d`, `argo-install`, `template`, `submit`, `status`, `pod`, `events`, `logs`, `doctor`, and a **cluster GC** target for k3d disk pressure.
 
----
-
-## Why changes were made (context from prior failures)
-
-1. **YAML parse errors** (`could not find expected ':'`, line ~64):  
-   - Caused by quoting/indent footguns and unused params. → Rewrote a minimal `WorkflowTemplate` with **explicit quoting**, removed `dask_perf_html`.
-
-2. **Wrong CLI flags** (`unrecognized arguments: --stac-url --output-zarr`):  
-   - The CLI expects **positional** args; the wrapper now converts flags to positional on the final `eopf-geozarr convert …` call.
-3. **Group mismatch** (`Could not find node at 0`):  
-   - `groups` like `measurements/reflectance/r20m` (no leading `/`) didn’t match store layout. → Wrapper **normalizes** groups and **preflights** to show *Available/Missing/Suggestions*.
-4. **`Permission denied` on `/app/scripts/convert.sh`**:  
-   - File mode lost on COPY. → Dockerfile now `chmod +x` after copying.
-5. **`ErrImagePull` / `ErrImageNeverPull`** with **local tags**:
-   - Fixed by `imagePullPolicy: IfNotPresent` and **importing** the image to k3d (`k3d image import …`).
-6. **Workflows stuck `Pending` with no pod**:  
-   - Root cause: **Argo controller** missing or not running in the `argo` namespace. → Install **v3.6.5** into `argo`, confirm CRDs, ensure controller is **Running**.
-7. **Controller pod stuck `Pending`**:
-   - Root cause: **DiskPressure** taints on k3d nodes. → **Prune containerd** content inside node containers and restart rollout.
-8. **Submit to wrong namespace / entrypoint**:  
-   - Ensured `namespace: argo`, `entrypoint` set, `serviceAccountName: default` set explicitly.
-9. **Dependency build failures** (`numpy==2.0.0rc1`, `rasterio` wheels missing):
-   - Use **wheels-first**, then fallback to installing GDAL toolchain & source build. Consider aligning Python version with wheels (py310/py311) and using upstream lock (see *Future improvements*).
-
----
-
 ## Known-good quickstart
 
 ```bash
@@ -231,6 +205,3 @@ If you’re optimizing this further, start by:
 2) Turning preflight into a tiny Python entrypoint (cleaner logging, unit tests).  
 3) Folding controller/bootstrap checks into `make doctor` with clear remedies.  
 
----
-
-*(End of explainer)*
