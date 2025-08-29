@@ -1,0 +1,47 @@
+# LLM_BRIEF.md — data-model-pipeline (Argo → GeoZarr)
+
+**Goal:** Convert **STAC Zarr** → **GeoZarr** using `eopf-geozarr` (from `EOPF-Explorer/data-model`) orchestrated by **Argo Workflows**. This brief gives you, an LLM, the exact constraints and context to optimize the repo without breaking behavior.
+
+## Must-keep invariants
+- CLI: `eopf-geozarr convert <input_path> <output_path> --groups <g1 g2 ...>` (positional input/output).
+- Wrapper (`scripts/convert.sh`):
+  - parse flags (`--stac-url`, `--output-zarr`, `--groups`, `--validate-groups`)
+  - accept groups as multiple tokens or a single string; fall back to `$GROUPS`/`$ARGO_GROUPS`
+  - normalize groups to absolute paths (add leading `/`)
+  - preflight `.zgroup` listing via `fsspec`
+  - unique-suffix **auto-mapping** for missing groups; respect `VALIDATE_GROUPS`
+  - unbuffered, chatty logs; exit non-zero on hard failures
+- WorkflowTemplate mounts a PVC at `/data`; `output_zarr` must live there.
+- Local image imported into k3d; `imagePullPolicy: IfNotPresent`.
+- Namespace: `argo`; Argo v3.6.5.
+- Single `params.json` (no `.example`).
+
+## External interfaces
+**Workflow parameters**: `image`, `pvc_name`, `stac_url`, `output_zarr`, `groups`, `validate_groups` (bool-like).  
+**Wrapper flags**: `--stac-url`, `--output-zarr`, `--groups`, `--validate-groups [true|false]`.
+
+## Repo structure (authoritative pieces)
+- `docker/Dockerfile`: multi-stage; wheels-first; fallback to install GDAL/PROJ; ensure `scripts/*.sh` are executable.
+- `workflows/geozarr-convert-template.yaml`: minimal, correct, `command: [bash, -lc]`, passes flags, sets `PYTHONUNBUFFERED` and `VALIDATE_GROUPS` envs, mounts PVC.
+- `scripts/convert.sh`: robust wrapper (see invariants).
+- `params.json`: sole defaults file.
+- `Makefile`: `build`, `load-k3d`, `argo-install`, `template`, `submit`, `logs`, `status`, `pod`, `events`, `doctor`, `cluster-gc`.
+
+## Caveats
+- k3d nodes may have **DiskPressure**; controller won’t schedule. Use `cluster-gc` to prune `containerd` in node containers.
+- Some object stores disallow directory listing; preflight warns and continues unless `VALIDATE_GROUPS=true`.
+- GDAL/rasterio wheels may be missing; Dockerfile falls back to system GDAL/PROJ and re-runs pip.
+
+## Optimization targets (safe to change)
+- **Deps provenance**: sync 3rd-party deps from `data-model` lock (e.g., `uv.lock`) then `pip install --no-deps eopf-geozarr` from same ref.
+- **Image**: slim layers, multi-arch, consistent Python ABI for rasterio wheels.
+- **Argo**: resource requests/limits; per-group fan-out; optional tar artifact step.
+- **DX**: stronger `make doctor` (ns, CRD, controller, DiskPressure checks).
+- **CI**: build & smoke test in kind/k3d; push to GHCR.
+- **Secrets**: credential flow for private object stores (fsspec envs/secret volumes).
+- **Observability**: structured logs/metrics; OTEL hooks.
+
+## Anti-goals
+- Reintroducing dev-only knobs (`dask_perf_html`) into the template.
+- Changing positional CLI to long flags for input/output.
+- Moving outputs outside `/data` in the container.
