@@ -12,8 +12,6 @@ ENV PYTHONUNBUFFERED=1 \
 ARG PORTABLE_BUILD=0
 # Git ref of the eopf-geozarr source (branch, tag, or commit)
 ARG EOPF_GEOZARR_REF=main
-# Optional subdirectory within the repo (empty means repo root)
-ARG EOPF_GEOZARR_SUBDIR=
 # Repo URL for the data-model project containing eopf-geozarr
 ARG EOPF_GEOZARR_REPO_URL=https://github.com/EOPF-Explorer/data-model.git
 
@@ -45,7 +43,6 @@ RUN set -eux; \
     echo "Cloning ${EOPF_GEOZARR_REPO_URL} @ ${EOPF_GEOZARR_REF} ..."; \
     git clone --depth 1 --branch "${EOPF_GEOZARR_REF}" "${EOPF_GEOZARR_REPO_URL}" /tmp/data-model; \
     cd /tmp/data-model; \
-    if [ -n "${EOPF_GEOZARR_SUBDIR}" ]; then cd "${EOPF_GEOZARR_SUBDIR}"; fi; \
     if uv pip install --system .; then \
     echo "Installed eopf-geozarr successfully (no native build needed)."; \
     else \

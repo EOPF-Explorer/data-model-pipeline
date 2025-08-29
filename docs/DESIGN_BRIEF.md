@@ -1,6 +1,6 @@
 # LLM_BRIEF.md — data-model-pipeline (Argo → GeoZarr)
 
-**Goal:** Convert **STAC Zarr** → **GeoZarr** using `eopf-geozarr` (from `EOPF-Explorer/data-model`) orchestrated by **Argo Workflows**. This brief gives you, an LLM, the exact constraints and context to optimize the repo without breaking behavior.
+**Goal:** Convert **STAC Zarr** → **GeoZarr** using `eopf-geozarr` (from `EOPF-Explorer/data-model`) orchestrated by **Argo Workflows**. This brief gives constraints and context to optimize the repo without breaking behavior.
 
 ## Must-keep invariants
 - CLI: `eopf-geozarr convert <input_path> <output_path> --groups <g1 g2 ...>` (positional input/output).
@@ -13,8 +13,7 @@
   - unbuffered, chatty logs; exit non-zero on hard failures
 - WorkflowTemplate mounts a PVC at `/data`; `output_zarr` must live there.
 - Local image imported into k3d; `imagePullPolicy: IfNotPresent`.
-- Namespace: `argo`; Argo v3.6.5.
-- Single `params.json` (no `.example`).
+- Single `params.json`).
 
 ## External interfaces
 **Workflow parameters**: `image`, `pvc_name`, `stac_url`, `output_zarr`, `groups`, `validate_groups` (bool-like).  
