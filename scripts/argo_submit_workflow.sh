@@ -9,6 +9,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 
 SUBMIT_IMAGE="${SUBMIT_IMAGE:-}"
+WF_TEMPLATE="${WF_TEMPLATE:-geozarr-convert}"
 REMOTE_SERVICE_ACCOUNT="${REMOTE_SERVICE_ACCOUNT:-${REMOTE_SERVICE_ACCOUNT:-}}"
 PARAMS_FILE="${PARAMS_FILE:-params.json}"
 
@@ -31,10 +32,16 @@ if "${here}/argo_remote.sh" submit --help 2>/dev/null | grep -q -- '--output'; t
 fi
 
 # Submit
+# Optionally pass S3 creds via env to workflow params (no secrets in params.json)
+EXTRA_PARAMS=()
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+  EXTRA_PARAMS+=( -p s3_access_key="${AWS_ACCESS_KEY_ID}" -p s3_secret_key="${AWS_SECRET_ACCESS_KEY}" )
+fi
+
 WF_OUT=$("${here}/argo_remote.sh" submit \
   --serviceaccount "${REMOTE_SERVICE_ACCOUNT:-default}" \
-  --from workflowtemplate/geozarr-convert \
-  -p image="${SUBMIT_IMAGE}" -p pvc_name=geozarr-pvc ${PARAMS}${OUT_FLAG} || true)
+  --from workflowtemplate/${WF_TEMPLATE} \
+  -p image="${SUBMIT_IMAGE}" ${EXTRA_PARAMS:+${EXTRA_PARAMS[@]}} ${PARAMS}${OUT_FLAG} || true)
 
 # Parse workflow name across CLI versions
 WF_NAME=$(printf '%s\n' "${WF_OUT}" | awk '/^Name:[[:space:]]/{print $2; exit} /^name:[[:space:]]/{print $2; exit}')

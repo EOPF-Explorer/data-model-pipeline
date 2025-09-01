@@ -27,7 +27,7 @@ make submit TAG=mytag
 
 ## What this repo contains
 
-- `workflows/geozarr-convert-template.yaml` — WorkflowTemplate: convert → optional STAC register.
+- `workflows/geozarr-convert-template.yaml` — WorkflowTemplate: convert → register (two-node DAG).
 - `params.json` — arguments for runs (stac_url, output_zarr, groups, validate_groups, optional register_*).
 - `Makefile` — concise remote UX: build/publish, template, submit, logs, get, ui, up, doctor.
 - `docker/Dockerfile` — image with `eopf-geozarr` installed (use if you need changes from the default image).
@@ -61,8 +61,47 @@ Notes: `output_zarr` is on the workflow’s PVC at `/data`; `groups` accepts spa
 - `make get` — describe the latest workflow.
 - `make ui` — print a direct Argo UI namespace link.
 - `make doctor` — minimal env sanity checks.
+- `make events-apply` — (optional) apply RabbitMQ → Argo Events source & sensor to auto-submit on queue messages.
 
 Overrideables: `DOCKERHUB_ORG`, `DOCKERHUB_REPO`, `TAG`, `SUBMIT_IMAGE`, `REMOTE_NAMESPACE`, `ARGO_REMOTE_SERVER`.
+
+## Optional: trigger via RabbitMQ (Argo Events)
+
+If you already produce STAC item messages to a RabbitMQ exchange, you can have Argo auto-submit:
+
+1) Edit `events/amqp-events.yaml` and set your AMQP `url`, `exchangeName`, and `routingKey`.
+2) Apply to the cluster namespace:
+
+```bash
+make events-apply
+```
+
+Incoming messages populate workflow parameters (e.g., `stac_url`, `register_*`). Adjust the Sensor’s parameter mapping as needed.
+
+## OVHcloud Object Storage (S3-compatible)
+
+You can upload the resulting Zarr to OVHcloud S3 before registering:
+
+Parameters (optional):
+- `s3_endpoint` (default `https://s3.de.io.cloud.ovh.net`)
+- `s3_bucket` (e.g., `esa-zarr-sentinel-explorer-fra`)
+- `s3_key` (object key; defaults to basename of output_zarr)
+
+Example snippet in `params.json`:
+
+Create a Kubernetes Secret named `ovh-s3-creds` in your remote namespace with keys `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (values from OpenStack EC2 credentials). The workflow will pick them up automatically via envFrom:
+
+```bash
+kubectl -n devseed create secret generic ovh-s3-creds \
+  --from-literal=AWS_ACCESS_KEY_ID='<ACCESS_KEY>' \
+  --from-literal=AWS_SECRET_ACCESS_KEY='<SECRET_KEY>'
+```
+
+The workflow uses awscli with `--endpoint-url` to push to OVHcloud. If `register_href` isn’t provided, it will use an HTTPS URL based on the endpoint/bucket/key for the STAC asset href.
+
+## AOI
+
+You can pass an `aoi` parameter through to the converter when supported by your image.
 
 ## Design and specs
 

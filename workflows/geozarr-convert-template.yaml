@@ -11,8 +11,6 @@ metadata:
 spec:
   entrypoint: pipeline
   serviceAccountName: devseed
-  imagePullSecrets:
-    - name: ghcr-creds
   workflowMetadata:
     labels:
       app.kubernetes.io/name: geozarr-convert
@@ -22,28 +20,35 @@ spec:
     parameters:
       - name: image
         value: "eopf-geozarr:dev"
-      - name: pvc_name
-        value: "geozarr-pvc"
-      # Input Zarr from STAC (Sentinel-2 L2A etc.)
       - name: stac_url
         value: "https://example.invalid/in.zarr"
-      # Output location on the PVC
       - name: output_zarr
         value: "/data/out.zarr"
-      # Groups can be space- or comma-separated; we normalize to absolute paths
       - name: groups
         value: "measurements/reflectance/r20m"
       - name: validate_groups
         value: "false"
-      # Optional STAC registration (Transactions API endpoint). If empty, registration is skipped.
+      - name: aoi
+        value: ""
       - name: register_url
         value: ""
       - name: register_collection
         value: ""
       - name: register_bearer_token
         value: ""
-  # Dynamically provision per-workflow storage using the cluster's default StorageClass.
-  # This removes the need for a pre-created PVC and works in most clusters (including k3d).
+      - name: register_href
+        value: ""
+      # Optional S3-compatible upload (e.g., OVHcloud)
+      - name: s3_endpoint
+        value: "https://s3.de.io.cloud.ovh.net"
+      - name: s3_bucket
+        value: "esa-zarr-sentinel-explorer-fra"
+      - name: s3_key
+        value: ""
+      - name: s3_access_key
+        value: ""
+      - name: s3_secret_key
+        value: ""
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -54,37 +59,54 @@ spec:
             storage: 50Gi
   templates:
     - name: pipeline
-      steps:
-        - - name: convert
+      dag:
+        tasks:
+          - name: convert
             template: convert
             arguments:
               parameters:
                 - { name: image, value: "{{workflow.parameters.image}}" }
-                - { name: pvc_name, value: "{{workflow.parameters.pvc_name}}" }
                 - { name: stac_url, value: "{{workflow.parameters.stac_url}}" }
                 - { name: output_zarr, value: "{{workflow.parameters.output_zarr}}" }
                 - { name: groups, value: "{{workflow.parameters.groups}}" }
                 - { name: validate_groups, value: "{{workflow.parameters.validate_groups}}" }
-        - - name: register
+                - { name: aoi, value: "{{workflow.parameters.aoi}}" }
+          - name: upload-s3
+            dependencies: [convert]
+            template: upload-s3
+            arguments:
+              parameters:
+                - { name: image, value: "{{workflow.parameters.image}}" }
+                - { name: output_zarr, value: "{{workflow.parameters.output_zarr}}" }
+                - { name: s3_endpoint, value: "{{workflow.parameters.s3_endpoint}}" }
+                - { name: s3_bucket, value: "{{workflow.parameters.s3_bucket}}" }
+                - { name: s3_key, value: "{{workflow.parameters.s3_key}}" }
+                - { name: s3_access_key, value: "{{workflow.parameters.s3_access_key}}" }
+                - { name: s3_secret_key, value: "{{workflow.parameters.s3_secret_key}}" }
+          - name: register
+            dependencies: [upload-s3]
             template: register-stac
             arguments:
               parameters:
                 - { name: image, value: "{{workflow.parameters.image}}" }
-                - { name: pvc_name, value: "{{workflow.parameters.pvc_name}}" }
                 - { name: output_zarr, value: "{{workflow.parameters.output_zarr}}" }
+                - { name: register_href, value: "{{workflow.parameters.register_href}}" }
                 - { name: register_url, value: "{{workflow.parameters.register_url}}" }
                 - { name: register_collection, value: "{{workflow.parameters.register_collection}}" }
                 - { name: register_bearer_token, value: "{{workflow.parameters.register_bearer_token}}" }
+                - { name: s3_endpoint, value: "{{workflow.parameters.s3_endpoint}}" }
+                - { name: s3_bucket, value: "{{workflow.parameters.s3_bucket}}" }
+                - { name: s3_key, value: "{{workflow.parameters.s3_key}}" }
 
     - name: convert
       inputs:
         parameters:
           - name: image
-          - name: pvc_name
           - name: stac_url
           - name: output_zarr
           - name: groups
           - name: validate_groups
+          - name: aoi
       container:
         image: "{{inputs.parameters.image}}"
         imagePullPolicy: IfNotPresent
@@ -97,6 +119,7 @@ spec:
             OUT="{{inputs.parameters.output_zarr}}"
             GROUPS_RAW="{{inputs.parameters.groups}}"
             VALIDATE="{{inputs.parameters.validate_groups}}"
+            AOI="{{inputs.parameters.aoi}}"
             PERF="/data/dask-report.html"
 
             echo "=== inputs ==="
@@ -104,6 +127,7 @@ spec:
             echo "output_zarr=$OUT"
             echo "groups_raw=$GROUPS_RAW"
             echo "validate_groups=$VALIDATE"
+            echo "aoi=$AOI"
 
             echo "=== env sanity ==="
             if ! command -v eopf-geozarr >/dev/null 2>&1; then
@@ -112,7 +136,6 @@ spec:
             fi
 
             # Normalize groups to absolute paths (accept comma or space separated)
-            # Note: don't use variable name GROUPS (special bash array); use GROUP_LIST
             GROUP_LIST=""
             for g in $(printf '%s' "$GROUPS_RAW" | tr ',' ' '); do
               [ -z "$g" ] && continue
@@ -134,29 +157,86 @@ spec:
             fi
 
             echo "=== convert ==="
-            # Minimal, version-agnostic CLI invocation (no optional flags)
             CMD=( eopf-geozarr convert "$STAC" "$OUT" --verbose )
             for g in $GROUP_LIST; do CMD+=( --groups "$g" ); done
+            if [ -n "$AOI" ]; then CMD+=( --aoi "$AOI" ); fi
             set -x
             "${CMD[@]}"
             set +x
 
-            echo "=== package artifact ==="
-            tar -czf "/data/geozarr.tar.gz" -C "$(dirname "$OUT")" "$(basename "$OUT")"
         volumeMounts:
           - name: data
             mountPath: /data
-  # Volume is provided by volumeClaimTemplates (name: data)
+
+    - name: upload-s3
+      inputs:
+        parameters:
+          - name: image
+          - name: output_zarr
+          - name: s3_endpoint
+          - name: s3_bucket
+          - name: s3_key
+          - name: s3_access_key
+          - name: s3_secret_key
+      container:
+        image: "{{inputs.parameters.image}}"
+        imagePullPolicy: IfNotPresent
+        envFrom:
+          - secretRef:
+              name: ovh-s3-creds
+              optional: true
+        command: [/bin/bash, -lc]
+        args:
+          - |
+            set -euo pipefail
+
+            OUT="{{inputs.parameters.output_zarr}}"
+            ENDPOINT="{{inputs.parameters.s3_endpoint}}"
+            BUCKET="{{inputs.parameters.s3_bucket}}"
+            KEY="{{inputs.parameters.s3_key}}"
+            ACCESS_KEY="{{inputs.parameters.s3_access_key}}"
+            SECRET_KEY="{{inputs.parameters.s3_secret_key}}"
+
+            if [ -z "$BUCKET" ]; then
+              echo "No s3_bucket provided; skipping upload."
+              exit 0
+            fi
+
+            # Default key from output_zarr if not provided
+            if [ -z "$KEY" ]; then
+              BASENAME="$(basename "$OUT")"
+              KEY="$BASENAME"
+            fi
+
+            # Credentials may come from a Kubernetes Secret (envFrom) or from provided parameters
+            if [ -n "$ACCESS_KEY" ] && [ -n "$SECRET_KEY" ]; then
+              export AWS_ACCESS_KEY_ID="$ACCESS_KEY"
+              export AWS_SECRET_ACCESS_KEY="$SECRET_KEY"
+            fi
+
+            echo "Uploading (sync) $OUT to s3://$BUCKET/$KEY via $ENDPOINT ..."
+            # Ensure KEY has no leading slash
+            KEY="${KEY#/}"
+            set -x
+            aws s3 sync "$OUT/" "s3://$BUCKET/$KEY/" --endpoint-url "$ENDPOINT" --only-show-errors
+            set +x
+            echo "Upload complete."
+        volumeMounts:
+          - name: data
+            mountPath: /data
 
     - name: register-stac
       inputs:
         parameters:
           - name: image
-          - name: pvc_name
           - name: output_zarr
+          - name: register_href
           - name: register_url
           - name: register_collection
           - name: register_bearer_token
+          - name: s3_endpoint
+          - name: s3_bucket
+          - name: s3_key
       container:
         image: "{{inputs.parameters.image}}"
         imagePullPolicy: IfNotPresent
@@ -166,9 +246,13 @@ spec:
             set -euo pipefail
 
             OUT="{{inputs.parameters.output_zarr}}"
+            HREF_OVERRIDE="{{inputs.parameters.register_href}}"
             URL="{{inputs.parameters.register_url}}"
             COLLECTION="{{inputs.parameters.register_collection}}"
             TOKEN="{{inputs.parameters.register_bearer_token}}"
+            ENDPOINT="{{inputs.parameters.s3_endpoint}}"
+            BUCKET="{{inputs.parameters.s3_bucket}}"
+            KEY="{{inputs.parameters.s3_key}}"
 
             if [ -z "$URL" ]; then
               echo "No register_url provided; skipping STAC registration."
@@ -180,7 +264,19 @@ spec:
             fi
 
             ITEM_ID="$(basename "$OUT" | sed 's/\.[^.]*$//')"
-            HREF_PLACEHOLDER="$OUT"
+            if [ -n "$HREF_OVERRIDE" ]; then
+              HREF_PLACEHOLDER="$HREF_OVERRIDE"
+            else
+              if [ -n "$BUCKET" ]; then
+                if [ -z "$KEY" ]; then
+                  KEY="$(basename "$OUT")"
+                fi
+                # Prefer a stable https URL for clients. OVH public URL layout for S3 is region dependent; allow endpoint-based path format as fallback.
+                HREF_PLACEHOLDER="${ENDPOINT%/}/$BUCKET/$KEY"
+              else
+                HREF_PLACEHOLDER="$OUT"
+              fi
+            fi
             ITEM_JSON="/data/${ITEM_ID}.item.json"
 
             echo "=== build minimal STAC Item ==="
@@ -222,7 +318,6 @@ spec:
         volumeMounts:
           - name: data
             mountPath: /data
-  # Volume is provided by volumeClaimTemplates (name: data)
 
   ttlStrategy:
     secondsAfterCompletion: 300

@@ -1,0 +1,75 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: geozarr-amqp
+  namespace: devseed
+spec:
+  amqp:
+    stac-items:
+      url: "amqps://<user>:<pass>@<host>:<port>/<vhost>"
+      exchangeType: topic
+      exchangeName: stac.search
+      routingKey: "items.#"
+      connectionBackoff:
+        duration: 5s
+      jsonBody: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: geozarr-stac-sensor
+  namespace: devseed
+spec:
+  dependencies:
+    - name: stac-items
+      eventSourceName: geozarr-amqp
+      eventName: stac-items
+  triggers:
+    - template:
+        name: submit-geozarr-convert
+        argoWorkflow:
+          group: argoproj.io
+          version: v1alpha1
+          resource: Workflow
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: geozarr-convert-
+                namespace: devseed
+              spec:
+                entrypoint: pipeline
+                workflowTemplateRef:
+                  name: geozarr-convert
+                arguments:
+                  parameters:
+                    # Map fields from the incoming message; set defaults as needed.
+                    - name: stac_url
+                      value: "{{eventBody.properties.href}}"
+                    - name: output_zarr
+                      value: "/data/{{sprig.trimSuffix ".zarr" (sprig.basename (index eventBody "properties" "href"))}}_geozarr.zarr"
+                    - name: groups
+                      value: "measurements/reflectance/r20m"
+                    - name: validate_groups
+                      value: "false"
+                    - name: aoi
+                      value: "{{eventBody.properties.aoi}}"
+                    - name: register_url
+                      value: "{{eventBody.properties.register_url}}"
+                    - name: register_collection
+                      value: "{{eventBody.properties.collection}}"
+                    - name: register_bearer_token
+                      value: ""
+                    - name: s3_endpoint
+                      value: "https://s3.de.io.cloud.ovh.net"
+                    - name: s3_bucket
+                      value: "esa-zarr-sentinel-explorer-fra"
+                    - name: s3_key
+                      value: "{{eventBody.properties.s3_key}}"
+          parameters:
+            - src:
+                dependencyName: stac-items
+                dataKey: body
+              dest: spec.arguments.parameters

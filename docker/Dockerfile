@@ -84,4 +84,7 @@ COPY --from=builder /usr/local /usr/local
 COPY scripts/ /app/scripts/
 RUN chmod -R a+rX /app && find /app/scripts -type f -name "*.sh" -exec chmod +x {} \;
 
+# AWS CLI for S3-compatible uploads (e.g., OVHcloud Object Storage)
+RUN pip install --no-cache-dir -U awscli
+
 ENTRYPOINT ["/bin/bash"]
