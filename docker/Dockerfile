@@ -70,6 +70,7 @@ ENV PYTHONUNBUFFERED=1
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    bash \
     libstdc++6 \
     libgomp1 \
     libexpat1 \

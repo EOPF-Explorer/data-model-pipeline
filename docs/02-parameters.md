@@ -2,10 +2,9 @@
 
 | Name              | Source            | Default              | Notes |
 |-------------------|-------------------|----------------------|-------|
-| `NAMESPACE`       | Make env          | `argo`               | Kubernetes namespace for Argo + PVC. |
-| `PVC_NAME`        | Make env          | `geozarr-pvc`        | PVC bound and mounted at `/data`. |
-| `IMAGE`           | Make env          | `eopf-geozarr:dev`   | Container image tag used by template. |
-| `ARGO_VER`        | Make env          | `v3.6.5`             | Argo Workflows version to install. |
+| `REMOTE_NAMESPACE`| Make env          | `devseed`            | Remote namespace for runs. |
+| `SUBMIT_IMAGE`    | Make env          | `docker.io/wietzesuijker/eopf-geozarr:dev` | Image used by submit. |
+| `PARAMS_FILE`     | Make env          | `params.json`        | Source of workflow parameters. |
 | `STAC_URL`        | submit param      | *(none)*             | Input Sentinel-2 Zarr location (HTTP/S3/Swift). |
 | `OUTPUT_ZARR`     | submit param      | `/data/out.zarr`     | Output path on PVC. |
 | `GROUPS`          | submit param      | `measurements/reflectance/r20m` | Path(s) within Zarr to convert (CLI supports multiple). |
@@ -13,10 +12,4 @@
 
 ### Examples
 
-```bash
-make submit \
-  STAC_URL="https://example.invalid/in.zarr" \
-  OUTPUT_ZARR="/data/out_geozarr.zarr" \
-  GROUPS="measurements/reflectance/r20m" \
-  VALIDATE_GROUPS=true
-```
+Edit `params.json` and run `make submit`.

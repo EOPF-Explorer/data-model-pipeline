@@ -1,110 +1,74 @@
-# Data Model Pipeline → GeoZarr (Argo prototype)
+# Data Model Pipeline → GeoZarr (Remote Argo)
 
-Convert Sentinel Zarr (from STAC) into **[GeoZarr](https://geozarr.readthedocs.io/)** using **Argo Workflows**.
-This repo is a **local prototype**: it demonstrates the EOPF conversion flow end‑to‑end on a lightweight **k3d** cluster.
+Run `eopf-geozarr` on a remote Argo Workflows cluster. This repo is remote‑first and intentionally lean; for converter details see the data-model repo.
 
----
-
-## Quickstart
+## TL;DR
 
 ```bash
-# full local run (bootstrap → cluster → argo → build → import → pvc → template → submit)
+# 0) One-time: get a UI token from Argo and export it in your shell
+export ARGO_TOKEN='Bearer <paste-from-UI>'
+
+# 1) Quick one-shot (apply template + submit using params.json)
 make up
 
-# if your cluster is already up (fast path):
-make up-fast
-
-# follow logs
+# 2) Watch logs
 make logs
+
+# 3) Open UI (namespace view)
+make ui
 ```
 
----
-
-## Prerequisites
-
-- **Docker** (or compatible runtime)
-- **k3d** (k3s in Docker): https://k3d.io/
-- **kubectl**: https://kubernetes.io/docs/tasks/tools/
-- **Argo Workflows CLI**: https://argo-workflows.readthedocs.io/en/stable/cli/
-- **make**
-
-You can quickly verify tool versions:
+Want a custom image? Build and publish to Docker Hub, then submit:
 
 ```bash
-make doctor
+make publish TAG=mytag
+make submit TAG=mytag
 ```
 
----
+## What this repo contains
 
-## How it works
+- `workflows/geozarr-convert-template.yaml` — WorkflowTemplate: convert → optional STAC register.
+- `params.json` — arguments for runs (stac_url, output_zarr, groups, validate_groups, optional register_*).
+- `Makefile` — concise remote UX: build/publish, template, submit, logs, get, ui, up, doctor.
+- `docker/Dockerfile` — image with `eopf-geozarr` installed (use if you need changes from the default image).
 
-The pipeline wraps the `eopf-geozarr` CLI and runs it in a container via an Argo **WorkflowTemplate**.
-Key files:
-- `docker/Dockerfile` – builds a runnable image with `eopf-geozarr`.
-- `workflows/geozarr-convert-template.yaml` – WorkflowTemplate used for submissions.
-- `scripts/convert.sh` – robust wrapper: parses flags, normalizes group paths, preflights `.zgroup`, and validates groups (optional).
-- `params.json` – default parameter values for local runs.
-- `Makefile` – repeatable developer flow (cluster, install argo, build image, submit, logs, fetch results).
-
----
-
-## Usage
-
-### 1) Configure parameters (optional)
-
-Edit `params.json` if you want to override defaults:
+## Parameters (edit `params.json`)
 
 ```json
 {
   "arguments": {
     "parameters": [
-      {"name": "stac_url",       "value": "https://…/S2…/my-scene.zarr"},
-      {"name": "output_zarr",    "value": "/data/S2_scene_geozarr.zarr"},
-      {"name": "groups",         "value": "measurements/reflectance/r20m"},
-      {"name": "validate_groups","value": "false"}
+      {"name": "stac_url", "value": "https://…/S2…/scene.zarr"},
+      {"name": "output_zarr", "value": "/data/scene_geozarr.zarr"},
+      {"name": "groups", "value": "measurements/reflectance/r20m"},
+      {"name": "validate_groups", "value": "false"},
+      {"name": "register_url", "value": ""},
+      {"name": "register_collection", "value": ""},
+      {"name": "register_bearer_token", "value": ""}
     ]
   }
 }
 ```
 
-Notes:
-- `output_zarr` must live under the mounted PVC path (`/data`).
-- `groups` accepts one or many group paths; the wrapper can also read `$GROUPS`/`$ARGO_GROUPS`.
-- If `validate_groups=true`, the run fails if a requested group is missing; otherwise a best‑effort suffix match is attempted with warnings.
+Notes: `output_zarr` is on the workflow’s PVC at `/data`; `groups` accepts space/comma; `validate_groups=true` will fail when a group is missing. Registration posts an Item to `{register_url}/collections/{register_collection}/items` if provided.
 
-### 2) Run
+## Common commands
 
-```bash
-make up          # first time (cluster + argo + build + submit)
-make up-fast     # subsequent runs (build + import + submit)
-make logs        # follow the most recent workflow logs
-```
+- `make up` — apply the template and submit immediately.
+- `make template` — apply/update the WorkflowTemplate (idempotent).
+- `make submit` — submit from the WorkflowTemplate using `params.json`.
+- `make logs` — tail the latest run.
+- `make get` — describe the latest workflow.
+- `make ui` — print a direct Argo UI namespace link.
+- `make doctor` — minimal env sanity checks.
 
-### 3) Retrieve results
+Overrideables: `DOCKERHUB_ORG`, `DOCKERHUB_REPO`, `TAG`, `SUBMIT_IMAGE`, `REMOTE_NAMESPACE`, `ARGO_REMOTE_SERVER`.
 
-```bash
-make fetch     # copies /data from the latest pod into ./out
-```
+## Design and specs
 
----
-
-## Limitations (prototype)
-
-- Focused on **Sentinel Zarr → GeoZarr** single‑scene conversion.
-- Tested locally on **k3d**; not production‑hardened for multi‑node clusters.
-- Image is imported into the local cluster (no registry push).
-- Minimal validation beyond group presence/shape checks.
-
----
-
-## Design docs
-
-- **[Design brief](docs/DESIGN_BRIEF.md)** — constraints and non‑negotiables for the working prototype.
-- **[Explainer](docs/DESIGN_EXPLAINER.md)** — deeper rationale and operational guidance.
-- **GeoZarr**: [spec repository](https://github.com/zarr-developers/geozarr-spec), [docs](https://geozarr.readthedocs.io/).
-
----
+- See `docs/` in this repo for the workflow contract and operational notes.
+- GeoZarr spec: https://geozarr.readthedocs.io/
 
 ## License
 
-Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).

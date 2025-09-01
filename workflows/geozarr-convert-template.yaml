@@ -2,25 +2,81 @@ apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: geozarr-convert
+  namespace: devseed
+  labels:
+    app.kubernetes.io/name: geozarr-convert
+    app.kubernetes.io/part-of: geozarr
+    managed-by: argo
+    example: "true"
 spec:
-  entrypoint: geozarr-convert
-  serviceAccountName: default
+  entrypoint: pipeline
+  serviceAccountName: devseed
+  imagePullSecrets:
+    - name: ghcr-creds
+  workflowMetadata:
+    labels:
+      app.kubernetes.io/name: geozarr-convert
+      app.kubernetes.io/part-of: geozarr
+      example: "true"
   arguments:
     parameters:
       - name: image
         value: "eopf-geozarr:dev"
       - name: pvc_name
         value: "geozarr-pvc"
+      # Input Zarr from STAC (Sentinel-2 L2A etc.)
       - name: stac_url
         value: "https://example.invalid/in.zarr"
+      # Output location on the PVC
       - name: output_zarr
         value: "/data/out.zarr"
+      # Groups can be space- or comma-separated; we normalize to absolute paths
       - name: groups
         value: "measurements/reflectance/r20m"
       - name: validate_groups
         value: "false"
+      # Optional STAC registration (Transactions API endpoint). If empty, registration is skipped.
+      - name: register_url
+        value: ""
+      - name: register_collection
+        value: ""
+      - name: register_bearer_token
+        value: ""
+  # Dynamically provision per-workflow storage using the cluster's default StorageClass.
+  # This removes the need for a pre-created PVC and works in most clusters (including k3d).
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 50Gi
   templates:
-    - name: geozarr-convert
+    - name: pipeline
+      steps:
+        - - name: convert
+            template: convert
+            arguments:
+              parameters:
+                - { name: image, value: "{{workflow.parameters.image}}" }
+                - { name: pvc_name, value: "{{workflow.parameters.pvc_name}}" }
+                - { name: stac_url, value: "{{workflow.parameters.stac_url}}" }
+                - { name: output_zarr, value: "{{workflow.parameters.output_zarr}}" }
+                - { name: groups, value: "{{workflow.parameters.groups}}" }
+                - { name: validate_groups, value: "{{workflow.parameters.validate_groups}}" }
+        - - name: register
+            template: register-stac
+            arguments:
+              parameters:
+                - { name: image, value: "{{workflow.parameters.image}}" }
+                - { name: pvc_name, value: "{{workflow.parameters.pvc_name}}" }
+                - { name: output_zarr, value: "{{workflow.parameters.output_zarr}}" }
+                - { name: register_url, value: "{{workflow.parameters.register_url}}" }
+                - { name: register_collection, value: "{{workflow.parameters.register_collection}}" }
+                - { name: register_bearer_token, value: "{{workflow.parameters.register_bearer_token}}" }
+
+    - name: convert
       inputs:
         parameters:
           - name: image
@@ -32,19 +88,143 @@ spec:
       container:
         image: "{{inputs.parameters.image}}"
         imagePullPolicy: IfNotPresent
-        command: [bash, -lc]
+        command: [/bin/bash, -lc]
         args:
           - |
             set -euo pipefail
-            bash /app/scripts/convert.sh \
-              --stac-url "{{inputs.parameters.stac_url}}" \
-              --output-zarr "{{inputs.parameters.output_zarr}}" \
-              --groups "{{inputs.parameters.groups}}" \
-              --validate-groups "{{inputs.parameters.validate_groups}}"
+
+            STAC="{{inputs.parameters.stac_url}}"
+            OUT="{{inputs.parameters.output_zarr}}"
+            GROUPS_RAW="{{inputs.parameters.groups}}"
+            VALIDATE="{{inputs.parameters.validate_groups}}"
+            PERF="/data/dask-report.html"
+
+            echo "=== inputs ==="
+            echo "stac_url=$STAC"
+            echo "output_zarr=$OUT"
+            echo "groups_raw=$GROUPS_RAW"
+            echo "validate_groups=$VALIDATE"
+
+            echo "=== env sanity ==="
+            if ! command -v eopf-geozarr >/dev/null 2>&1; then
+              echo "[error] eopf-geozarr not found on PATH";
+              exit 127;
+            fi
+
+            # Normalize groups to absolute paths (accept comma or space separated)
+            # Note: don't use variable name GROUPS (special bash array); use GROUP_LIST
+            GROUP_LIST=""
+            for g in $(printf '%s' "$GROUPS_RAW" | tr ',' ' '); do
+              [ -z "$g" ] && continue
+              case "$g" in /*) N="$g";; *) N="/$g";; esac
+              GROUP_LIST="$GROUP_LIST $N"
+            done
+            GROUP_LIST="${GROUP_LIST# }"
+            echo "groups_norm=$GROUP_LIST"
+
+            if [ "$VALIDATE" = "true" ]; then
+              echo "=== validate groups ==="
+              for g in $GROUP_LIST; do
+                if ! python -c 'import sys,xarray as xr; stac,grp=sys.argv[1:3]; dt=xr.open_datatree(stac, engine="zarr", consolidated=None); key=grp.strip("/"); _=dt[key]' "$STAC" "$g"; then
+                  echo "[error] $g: missing or unreadable"
+                  exit 64
+                fi
+              done
+              echo "Groups OK: $GROUP_LIST"
+            fi
+
+            echo "=== convert ==="
+            # Minimal, version-agnostic CLI invocation (no optional flags)
+            CMD=( eopf-geozarr convert "$STAC" "$OUT" --verbose )
+            for g in $GROUP_LIST; do CMD+=( --groups "$g" ); done
+            set -x
+            "${CMD[@]}"
+            set +x
+
+            echo "=== package artifact ==="
+            tar -czf "/data/geozarr.tar.gz" -C "$(dirname "$OUT")" "$(basename "$OUT")"
         volumeMounts:
           - name: data
             mountPath: /data
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: "{{inputs.parameters.pvc_name}}"
+  # Volume is provided by volumeClaimTemplates (name: data)
+
+    - name: register-stac
+      inputs:
+        parameters:
+          - name: image
+          - name: pvc_name
+          - name: output_zarr
+          - name: register_url
+          - name: register_collection
+          - name: register_bearer_token
+      container:
+        image: "{{inputs.parameters.image}}"
+        imagePullPolicy: IfNotPresent
+        command: [/bin/bash, -lc]
+        args:
+          - |
+            set -euo pipefail
+
+            OUT="{{inputs.parameters.output_zarr}}"
+            URL="{{inputs.parameters.register_url}}"
+            COLLECTION="{{inputs.parameters.register_collection}}"
+            TOKEN="{{inputs.parameters.register_bearer_token}}"
+
+            if [ -z "$URL" ]; then
+              echo "No register_url provided; skipping STAC registration."
+              exit 0
+            fi
+            if [ -z "$COLLECTION" ]; then
+              echo "register_url provided but register_collection is empty; skipping registration."
+              exit 0
+            fi
+
+            ITEM_ID="$(basename "$OUT" | sed 's/\.[^.]*$//')"
+            HREF_PLACEHOLDER="$OUT"
+            ITEM_JSON="/data/${ITEM_ID}.item.json"
+
+            echo "=== build minimal STAC Item ==="
+            printf '%s\n' \
+              '{' \
+              '  "type": "Feature",' \
+              '  "stac_version": "1.0.0",' \
+              "  \"id\": \"${ITEM_ID}\"," \
+              "  \"collection\": \"${COLLECTION}\"," \
+              '  "geometry": null,' \
+              '  "bbox": null,' \
+              '  "properties": {},' \
+              '  "assets": {' \
+              '    "data": {' \
+              "      \"href\": \"${HREF_PLACEHOLDER}\"," \
+              '      "type": "application/vnd+zarr",' \
+              '      "roles": ["data"],' \
+              '      "title": "GeoZarr dataset"' \
+              '    }' \
+              '  },' \
+              '  "links": []' \
+              '}' \
+              > "$ITEM_JSON"
+
+            echo "Wrote $ITEM_JSON"
+
+            echo "=== POST to STAC Transactions (if supported) ==="
+            HDRS=("Content-Type: application/json")
+            if [ -n "$TOKEN" ]; then
+              HDRS+=("Authorization: Bearer $TOKEN")
+            fi
+            set -x
+            curl -fsS -X POST "${URL%/}/collections/${COLLECTION}/items" \
+              "${HDRS[@]/#/-H }" \
+              --data-binary "@${ITEM_JSON}" \
+              -o /data/register-response.json
+            set +x
+            echo "Registration response saved to /data/register-response.json"
+        volumeMounts:
+          - name: data
+            mountPath: /data
+  # Volume is provided by volumeClaimTemplates (name: data)
+
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  podGC:
+    strategy: OnPodCompletion
