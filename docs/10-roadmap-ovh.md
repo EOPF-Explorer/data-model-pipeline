@@ -10,6 +10,8 @@
 - Increase throughput by fan-out per *group/band/tile*. Use a DAG with parallel steps.
 - Control parallelism at **workflow** and **controller** levels; set resources per template (CPU/memory).
 
+See also: docs/11-alignment-sentinel-zarr.md for cross-repo alignment steps with sentinel-zarr-explorer-coordination.
+
 ## Images
 - Push to an OVH-accessible registry (Harbor/CR/Hub). Add `imagePullSecrets` when needed.
 
