@@ -1,19 +1,16 @@
 # Troubleshooting
 
-**No k3d cluster**: `FATA[0000] failed to get cluster ... No nodes found`  
-→ `k3d cluster create k3s-default` (Makefile targets are idempotent).
+**AlreadyExists on template**  
+→ Use `make template-force` to delete and re-apply.
 
-**Namespace not found**: `namespaces "argo" not found`  
-→ Our `ensure_pvc.sh` creates the namespace if needed. Run `make up` again.
+**TLS / x509 unknown authority**  
+→ Set `export ARGO_INSECURE_SKIP_VERIFY=true` or supply a CA file via `ARGO_CA_FILE`.
 
-**No WorkflowTemplate CRD**: `no matches for kind "WorkflowTemplate"`  
-→ `make up` installs Argo v3.6.5 and waits for CRDs. Verify: `kubectl api-resources | grep WorkflowTemplate`.
+**Cannot parse workflow name on submit**  
+→ `make submit` now prints a clean URL. If the name can’t be determined, it prints the namespace UI instead.
 
-**YAML parse error** when applying template  
-→ We ship a validated template. To lint changes: `kubectl create --dry-run=client -f workflows/geozarr-convert-template.yaml`.
+**Image pull errors**  
+→ Ensure the image is public on Docker Hub, or configure an imagePullSecret and add it to the WorkflowTemplate.
 
-**Image not visible inside cluster**  
-→ Use our default `k3d image import` path; or set `USE_REGISTRY=1` and push to the local k3d registry.
-
-**Object storage auth** (future)  
-→ For OVH object storage, mount credentials as a Secret and inject env vars; see `docs/10-roadmap-ovh.md`.
+**Auth errors**  
+→ Get a fresh token from the Argo UI and export: `export ARGO_TOKEN='Bearer <token>'`.

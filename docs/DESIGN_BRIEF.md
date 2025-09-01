@@ -4,13 +4,7 @@
 
 ## Must-keep invariants
 - CLI: `eopf-geozarr convert <input_path> <output_path> --groups <g1 g2 ...>` (positional input/output).
-- Wrapper (`scripts/convert.sh`):
-  - parse flags (`--stac-url`, `--output-zarr`, `--groups`, `--validate-groups`)
-  - accept groups as multiple tokens or a single string; fall back to `$GROUPS`/`$ARGO_GROUPS`
-  - normalize groups to absolute paths (add leading `/`)
-  - preflight `.zgroup` listing via `fsspec`
-  - unique-suffix **auto-mapping** for missing groups; respect `VALIDATE_GROUPS`
-  - unbuffered, chatty logs; exit non-zero on hard failures
+- Remote-first, wrapper-less: the WorkflowTemplate invokes `eopf-geozarr convert` directly. Groups are normalized in the template; validation is optional via `validate_groups`.
 - WorkflowTemplate mounts a PVC at `/data`; `output_zarr` must live there.
 - Local image imported into k3d; `imagePullPolicy: IfNotPresent`.
 - Single `params.json`).
@@ -22,7 +16,7 @@
 ## Repo structure (authoritative pieces)
 - `docker/Dockerfile`: multi-stage; wheels-first; fallback to install GDAL/PROJ; ensure `scripts/*.sh` are executable.
 - `workflows/geozarr-convert-template.yaml`: minimal, correct, `command: [bash, -lc]`, passes flags, sets `PYTHONUNBUFFERED` and `VALIDATE_GROUPS` envs, mounts PVC.
-- `scripts/convert.sh`: robust wrapper (see invariants).
+- Wrapper removed; rely on direct CLI.
 - `params.json`: sole defaults file.
 - `Makefile`: `build`, `load-k3d`, `argo-install`, `template`, `submit`, `logs`, `status`, `pod`, `events`, `doctor`, `cluster-gc`.
 

@@ -28,7 +28,7 @@ Purpose: propose pragmatic steps to align pipeline execution, interfaces, and de
   - Inputs: object store URIs or PVC mount paths; explicit band/group selection; temporal/spatial AOI.
   - Outputs: GeoZarr v3 with the agreed layout; optional STAC JSON; emit a small “run.json” manifest (URIs, checksums, timings) for the explorer indexer.
 - Error and status
-  - Standardize step exit codes and progress events; reuse `scripts/progress_ui.py` format for Argo annotations/logging.
+  - Standardize step exit codes and progress events; prefer structured logs and Argo annotations without custom proxies.
 
 ## Operational alignment on OVH
 - Images & registry

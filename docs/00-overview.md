@@ -1,22 +1,16 @@
 
 # Overview
 
-**Goal:** Convert Sentinel Zarr → GeoZarr using a simple Argo pipeline.
+**Goal:** Convert Sentinel Zarr → GeoZarr using a simple Argo pipeline on a remote cluster.
 
-- **Local prototype**: run in k3d/k3s with minimal setup.
-- **Inputs**: Sentinel STAC URL, group(s) to convert.
-- **Outputs**: GeoZarr-compliant dataset in PVC.
+- Remote-first usage; local k3d/kubectl bootstrap has been removed.
+- Inputs: Sentinel STAC URL and group(s) to convert.
+- Outputs: GeoZarr dataset written to a remote PVC.
 
-## Flow
+## Flow (remote)
 
-1. **Bootstrap** tools (docker, k3d, kubectl, argo CLI).  
-2. **Cluster**: ensure local k3d cluster exists.  
-3. **Argo**: install controller + CRDs (v3.6.5).  
-4. **Image**: build and import `eopf-geozarr:dev`.  
-5. **PVC**: create if needed.  
-6. **WorkflowTemplate**: applied to cluster.  
-7. **Submit**: run conversion job.
-
----
-
-This structure maps directly to `make up` → `make logs`.
+1. Export your Argo UI token: `export ARGO_TOKEN='Bearer <paste-from-UI>'`  
+2. Apply the WorkflowTemplate: `make template`  
+3. Submit a run: `make submit`  
+4. Tail logs: `make logs`  
+5. Open UI: `make ui`

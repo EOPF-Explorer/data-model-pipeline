@@ -12,7 +12,7 @@ The goal of this document is to pass all *relevant operational context* and *des
 - **CLI contract** (from `data-model`):  
   `eopf-geozarr convert <input_path> <output_path> --groups <one or more group paths> [--dask-cluster] [--verbose]`  
   *Important:* `convert` expects **positional** `input` and `output`. Default groups in the CLI are `["/measurements/r10m", "/measurements/r20m", "/measurements/r60m"]`, but here we pass **explicit groups**.
-- **Wrapper** (`scripts/convert.sh`): parses flags, **normalizes group paths** (adds leading `/`), **preflights** the Zarr store to list available groups, and fails with **actionable suggestions** if a group is missing.
+- Remote-first: the workflow calls the `eopf-geozarr` CLI directly inside the container. Group paths are normalized in-template; optional validation can be enabled via the `validate_groups` parameter.
 - **WorkflowTemplate**: minimal & valid Argo spec, **no dev-only params** (`dask_perf_html` removed), PVC mounted at `/data`, `imagePullPolicy: IfNotPresent`.
 - **Image**: built locally and **imported into k3d**, so the pod doesn’t need to pull from registries.
 - **Namespace**: everything targets **`argo`** (not `argo-workflows`). Argo version used in manifests/logs is **v3.6.5**.
@@ -25,7 +25,7 @@ The goal of this document is to pass all *relevant operational context* and *des
   - Installs `eopf-geozarr` from the **data-model** repo via `pip install git+…`.
   - If `rasterio` fails to import, installs **GDAL/PROJ** system packages and retries pip install (wheels → source build fallback).
   - Ensures `scripts/*.sh` are **executable** after `COPY`.
-- `scripts/convert.sh` — **wrapper** that:
+- Wrapper removed: direct CLI usage in the Argo template keeps the surface minimal and avoids an extra layer.
   - accepts `--stac-url`, `--output-zarr`, `--groups …`
   - **normalizes** groups to absolute paths (`/…`), falls back to `$ARGO_GROUPS` if empty/`0`
   - **preflights** (via `fsspec`) to list `.zgroup`s and **validate** requested groups (prints *Available/Missing/Suggestions*)
@@ -33,7 +33,7 @@ The goal of this document is to pass all *relevant operational context* and *des
 - `workflows/geozarr-convert-template.yaml` — **clean** Argo WorkflowTemplate:
   - `entrypoint: geozarr-convert`, `serviceAccountName: default`
   - parameters: `image`, `pvc_name`, `stac_url`, `output_zarr`, `groups`, `validate_groups`
-  - container runs `bash /app/scripts/convert.sh …`
+  - container runs `bash -lc` and invokes `eopf-geozarr convert …` directly
   - mounts PVC param at `/data` (used for `output_zarr`)
 - `params.json` — the **only** param file; no `.example`:
   ```json
@@ -110,8 +110,7 @@ kubectl -n argo rollout restart deploy/workflow-controller
 - Ensure the template uses `imagePullPolicy: IfNotPresent`.
 
 ### Exec permission denied (wrapper)
-- Ensure Dockerfile performs `chmod +x /app/scripts/*.sh` after `COPY`.
-- Call wrapper as `bash /app/scripts/convert.sh …` (works even if mode flips).
+- Ensure the runtime image includes `/bin/bash` and `eopf-geozarr` on PATH.
 
 ### Group/path errors (`Could not find node at 0`)
 - Use **absolute** group paths (leading `/`).  
