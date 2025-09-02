@@ -27,7 +27,7 @@ make submit TAG=mytag
 
 ## What this repo contains
 
-- `workflows/geozarr-convert-template.yaml` — WorkflowTemplate: convert → upload-s3 → register (three-node DAG).
+ - `workflows/geozarr-convert-template.yaml` — WorkflowTemplate: convert → register (two-node DAG). Output can be a PVC path or an s3:// URL.
 - `params.json` — arguments for runs (stac_url, output_zarr, groups, validate_groups, optional register_*).
 - `Makefile` — concise remote UX: build/publish, template, submit, logs, get, ui, up, doctor.
 - `docker/Dockerfile` — image with `eopf-geozarr` installed (use if you need changes from the default image).
@@ -89,17 +89,11 @@ Incoming messages populate workflow parameters (e.g., `stac_url`, `register_*`).
 
 ## OVHcloud Object Storage (S3-compatible)
 
-You can upload the resulting Zarr to OVHcloud S3 before registering:
-
-Parameters (optional):
-- `s3_endpoint` (default `https://s3.de.io.cloud.ovh.net`)
-- `s3_bucket` (e.g., `esa-zarr-sentinel-explorer-fra`)
-- `s3_key` (object key; defaults to basename of output_zarr)
+Write directly to S3 using fsspec/s3fs by setting `output_zarr` to an s3:// URL, e.g. `s3://esa-zarr-sentinel-explorer-fra/<item>_geozarr.zarr`. Set `s3_endpoint` if your S3 is not AWS (e.g., OVH).
 
 Credentials:
 
-- Preferred: create a Kubernetes Secret named `ovh-s3-creds` in your remote namespace with keys `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (values from OpenStack EC2 credentials). The workflow will pick them up automatically via envFrom.
-- Optional: you can also export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in your shell before `make submit`; the submit script will pass them to the workflow as ephemeral parameters (they’re not stored in `params.json`).
+- Preferred: create a Kubernetes Secret named `ovh-s3-creds` in your remote namespace with keys `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The workflow mounts it via envFrom.
 
 ```bash
 kubectl -n devseed create secret generic ovh-s3-creds \
@@ -107,7 +101,7 @@ kubectl -n devseed create secret generic ovh-s3-creds \
   --from-literal=AWS_SECRET_ACCESS_KEY='<SECRET_KEY>'
 ```
 
-The workflow uses awscli with `--endpoint-url` to push to OVHcloud. If `register_href` isn’t provided, it will use an HTTPS URL based on the endpoint/bucket/key for the STAC asset href.
+If `register_href` isn’t provided, the workflow derives the STAC asset href from `output_zarr`. For s3:// outputs and a provided `s3_endpoint`, it constructs `https://<endpoint>/<bucket>/<key>`.
 
 ## AOI
 

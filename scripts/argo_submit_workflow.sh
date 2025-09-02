@@ -32,11 +32,7 @@ if "${here}/argo_remote.sh" submit --help 2>/dev/null | grep -q -- '--output'; t
 fi
 
 # Submit
-# Optionally pass S3 creds via env to workflow params (no secrets in params.json)
 EXTRA_PARAMS=()
-if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
-  EXTRA_PARAMS+=( -p s3_access_key="${AWS_ACCESS_KEY_ID}" -p s3_secret_key="${AWS_SECRET_ACCESS_KEY}" )
-fi
 
 WF_OUT=$("${here}/argo_remote.sh" submit \
   --serviceaccount "${REMOTE_SERVICE_ACCOUNT:-default}" \

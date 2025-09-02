@@ -15,9 +15,7 @@
 | `register_collection`  | workflow arg |                                           | Collection ID to register into. |
 | `register_bearer_token`| workflow arg |                                           | Bearer token for auth, if required. |
 | `register_href`        | workflow arg |                                           | Optional explicit href for the GeoZarr asset. |
-| `s3_endpoint`          | workflow arg | `https://s3.de.io.cloud.ovh.net`           | OVHcloud S3 endpoint for uploads. |
-| `s3_bucket`            | workflow arg |                                           | Bucket to upload to; when empty, upload is skipped. |
-| `s3_key`               | workflow arg |                                           | Object key (defaults to basename of `output_zarr`). |
+| `s3_endpoint`          | workflow arg | `https://s3.de.io.cloud.ovh.net`           | OVHcloud S3 endpoint for direct S3 writes via fsspec. |
 
 ### Example params.json
 
@@ -35,10 +33,8 @@ Edit `params.json` and run `make submit`.
       {"name": "register_url", "value": ""},
       {"name": "register_collection", "value": ""},
       {"name": "register_bearer_token", "value": ""},
-      {"name": "register_href", "value": ""},
-      {"name": "s3_endpoint", "value": "https://s3.de.io.cloud.ovh.net"},
-      {"name": "s3_bucket", "value": ""},
-      {"name": "s3_key", "value": ""}
+  {"name": "register_href", "value": ""},
+  {"name": "s3_endpoint", "value": "https://s3.de.io.cloud.ovh.net"}
     ]
   }
 }

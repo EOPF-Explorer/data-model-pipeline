@@ -15,8 +15,8 @@
 **Auth errors**  
 → Get a fresh token from the Argo UI and export: `export ARGO_TOKEN='Bearer <token>'`.
 
-**S3 upload skipped**  
-→ If `s3_bucket` is empty, the upload step will no-op. Set `s3_bucket` and optionally `s3_key`. Provide credentials via the `ovh-s3-creds` Secret (preferred) or export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` before `make submit`.
+**S3 write issues**  
+→ Use `output_zarr` as an `s3://bucket/key` URL and set `s3_endpoint` for OVH. Provide credentials via the `ovh-s3-creds` Secret (preferred). Ensure network egress allows the endpoint.
 
 **Wrong namespace**  
 → Ensure `REMOTE_NAMESPACE` matches where you created the `ovh-s3-creds` secret and where your Argo Workflows controller watches. Use `make env` to verify the namespace.

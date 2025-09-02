@@ -4,11 +4,11 @@
 
 - Remote-first usage; local bootstrap removed.
 - Inputs: Sentinel STAC URL and group(s) to convert; optional AOI.
-- Outputs: GeoZarr dataset written to a PVC, optionally uploaded to S3 (OVH), and optionally registered in a STAC API.
+- Outputs: GeoZarr dataset written to a PVC or directly to S3 (OVH), and optionally registered in a STAC API.
 
 ## Pipeline (DAG):
 
-- convert → upload-s3 (optional when bucket set) → register (optional when URL+collection set)
+- convert → register (register is optional when URL+collection set)
 
 ## Flow (remote)
 
