@@ -51,6 +51,7 @@ spec:
                       value: "{{eventBody.properties.href}}"
                     - name: output_zarr
                       value: "/data/{{sprig.trimSuffix ".zarr" (sprig.basename (index eventBody "properties" "href"))}}_geozarr.zarr"
+                       # Updated to reflect no upload step; not strictly necessary but keeps consistency.
                     - name: groups
                       value: "measurements/reflectance/r20m"
                     - name: validate_groups

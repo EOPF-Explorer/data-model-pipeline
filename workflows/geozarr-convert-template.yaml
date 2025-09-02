@@ -38,17 +38,9 @@ spec:
         value: ""
       - name: register_href
         value: ""
-      # Optional S3-compatible upload (e.g., OVHcloud)
+      # Optional S3-compatible endpoint for direct writes (e.g., OVHcloud)
       - name: s3_endpoint
         value: "https://s3.de.io.cloud.ovh.net"
-      - name: s3_bucket
-        value: "esa-zarr-sentinel-explorer-fra"
-      - name: s3_key
-        value: ""
-      - name: s3_access_key
-        value: ""
-      - name: s3_secret_key
-        value: ""
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -72,20 +64,9 @@ spec:
                 - { name: groups, value: "{{workflow.parameters.groups}}" }
                 - { name: validate_groups, value: "{{workflow.parameters.validate_groups}}" }
                 - { name: aoi, value: "{{workflow.parameters.aoi}}" }
-          - name: upload-s3
-            dependencies: [convert]
-            template: upload-s3
-            arguments:
-              parameters:
-                - { name: image, value: "{{workflow.parameters.image}}" }
-                - { name: output_zarr, value: "{{workflow.parameters.output_zarr}}" }
                 - { name: s3_endpoint, value: "{{workflow.parameters.s3_endpoint}}" }
-                - { name: s3_bucket, value: "{{workflow.parameters.s3_bucket}}" }
-                - { name: s3_key, value: "{{workflow.parameters.s3_key}}" }
-                - { name: s3_access_key, value: "{{workflow.parameters.s3_access_key}}" }
-                - { name: s3_secret_key, value: "{{workflow.parameters.s3_secret_key}}" }
           - name: register
-            dependencies: [upload-s3]
+            dependencies: [convert]
             template: register-stac
             arguments:
               parameters:
@@ -96,8 +77,6 @@ spec:
                 - { name: register_collection, value: "{{workflow.parameters.register_collection}}" }
                 - { name: register_bearer_token, value: "{{workflow.parameters.register_bearer_token}}" }
                 - { name: s3_endpoint, value: "{{workflow.parameters.s3_endpoint}}" }
-                - { name: s3_bucket, value: "{{workflow.parameters.s3_bucket}}" }
-                - { name: s3_key, value: "{{workflow.parameters.s3_key}}" }
 
     - name: convert
       inputs:
@@ -108,9 +87,14 @@ spec:
           - name: groups
           - name: validate_groups
           - name: aoi
+          - name: s3_endpoint
       container:
         image: "{{inputs.parameters.image}}"
         imagePullPolicy: IfNotPresent
+        envFrom:
+          - secretRef:
+              name: ovh-s3-creds
+              optional: true
         command: [/bin/bash, -lc]
         args:
           - |
@@ -121,6 +105,7 @@ spec:
             GROUPS_RAW="{{inputs.parameters.groups}}"
             VALIDATE="{{inputs.parameters.validate_groups}}"
             AOI="{{inputs.parameters.aoi}}"
+            S3_ENDPOINT="{{inputs.parameters.s3_endpoint}}"
             PERF="/data/dask-report.html"
 
             echo "=== inputs ==="
@@ -158,6 +143,11 @@ spec:
             fi
 
             echo "=== convert ==="
+            # Configure S3 endpoint for s3fs/boto if provided
+            if [ -n "$S3_ENDPOINT" ]; then
+              export AWS_S3_ENDPOINT="$S3_ENDPOINT"
+              export AWS_ENDPOINT_URL="$S3_ENDPOINT"
+            fi
             CMD=( eopf-geozarr convert "$STAC" "$OUT" --verbose )
             for g in $GROUP_LIST; do CMD+=( --groups "$g" ); done
             if [ -n "$AOI" ]; then CMD+=( --aoi "$AOI" ); fi
@@ -165,65 +155,6 @@ spec:
             "${CMD[@]}"
             set +x
 
-        volumeMounts:
-          - name: data
-            mountPath: /data
-
-    - name: upload-s3
-      inputs:
-        parameters:
-          - name: image
-          - name: output_zarr
-          - name: s3_endpoint
-          - name: s3_bucket
-          - name: s3_key
-          - name: s3_access_key
-          - name: s3_secret_key
-      container:
-        image: "{{inputs.parameters.image}}"
-        imagePullPolicy: IfNotPresent
-        envFrom:
-          - secretRef:
-              name: ovh-s3-creds
-              optional: true
-  # Credentials are preferably provided via the ovh-s3-creds Secret.
-  # As a fallback, submit can pass s3_access_key/s3_secret_key params.
-        command: [/bin/bash, -lc]
-        args:
-          - |
-            set -euo pipefail
-
-            OUT="{{inputs.parameters.output_zarr}}"
-            ENDPOINT="{{inputs.parameters.s3_endpoint}}"
-            BUCKET="{{inputs.parameters.s3_bucket}}"
-            KEY="{{inputs.parameters.s3_key}}"
-            ACCESS_KEY="{{inputs.parameters.s3_access_key}}"
-            SECRET_KEY="{{inputs.parameters.s3_secret_key}}"
-
-            if [ -z "$BUCKET" ]; then
-              echo "No s3_bucket provided; skipping upload."
-              exit 0
-            fi
-
-            # Default key from output_zarr if not provided
-            if [ -z "$KEY" ]; then
-              BASENAME="$(basename "$OUT")"
-              KEY="$BASENAME"
-            fi
-
-            # Credentials may come from a Kubernetes Secret (envFrom) or from provided parameters
-            if [ -n "$ACCESS_KEY" ] && [ -n "$SECRET_KEY" ]; then
-              export AWS_ACCESS_KEY_ID="$ACCESS_KEY"
-              export AWS_SECRET_ACCESS_KEY="$SECRET_KEY"
-            fi
-
-            echo "Uploading (sync) $OUT to s3://$BUCKET/$KEY via $ENDPOINT ..."
-            # Ensure KEY has no leading slash
-            KEY="${KEY#/}"
-            set -x
-            aws s3 sync "$OUT/" "s3://$BUCKET/$KEY/" --endpoint-url "$ENDPOINT" --only-show-errors
-            set +x
-            echo "Upload complete."
         volumeMounts:
           - name: data
             mountPath: /data
@@ -238,8 +169,6 @@ spec:
           - name: register_collection
           - name: register_bearer_token
           - name: s3_endpoint
-          - name: s3_bucket
-          - name: s3_key
       container:
         image: "{{inputs.parameters.image}}"
         imagePullPolicy: IfNotPresent
@@ -254,8 +183,6 @@ spec:
             COLLECTION="{{inputs.parameters.register_collection}}"
             TOKEN="{{inputs.parameters.register_bearer_token}}"
             ENDPOINT="{{inputs.parameters.s3_endpoint}}"
-            BUCKET="{{inputs.parameters.s3_bucket}}"
-            KEY="{{inputs.parameters.s3_key}}"
 
             if [ -z "$URL" ]; then
               echo "No register_url provided; skipping STAC registration."
@@ -270,12 +197,16 @@ spec:
             if [ -n "$HREF_OVERRIDE" ]; then
               HREF_PLACEHOLDER="$HREF_OVERRIDE"
             else
-              if [ -n "$BUCKET" ]; then
-                if [ -z "$KEY" ]; then
-                  KEY="$(basename "$OUT")"
+              # If output is s3://bucket/key and endpoint is provided, derive an https-style URL
+              if printf '%s' "$OUT" | grep -q '^s3://'; then
+                if [ -n "$ENDPOINT" ]; then
+                  PATH_NO_SCHEME="${OUT#s3://}"
+                  BUCKET="${PATH_NO_SCHEME%%/*}"
+                  KEY="${PATH_NO_SCHEME#*/}"
+                  HREF_PLACEHOLDER="${ENDPOINT%/}/$BUCKET/$KEY"
+                else
+                  HREF_PLACEHOLDER="$OUT"
                 fi
-                # Prefer a stable https URL for clients. OVH public URL layout for S3 is region dependent; allow endpoint-based path format as fallback.
-                HREF_PLACEHOLDER="${ENDPOINT%/}/$BUCKET/$KEY"
               else
                 HREF_PLACEHOLDER="$OUT"
               fi
