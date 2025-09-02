@@ -16,7 +16,7 @@ make logs
 make ui
 ```
 
-Custom image (optional):
+Custom image (optional, published to GHCR):
 
 ```bash
 make publish TAG=mytag
@@ -68,7 +68,7 @@ Notes:
 - `make ui` — print Argo UI link
 - `make doctor` — quick checks
 
-Vars you can override: `DOCKERHUB_ORG`, `DOCKERHUB_REPO`, `TAG`, `SUBMIT_IMAGE`, `REMOTE_NAMESPACE`, `ARGO_REMOTE_SERVER`.
+Vars you can override: `GHCR_ORG`, `GHCR_REPO`, `TAG`, `SUBMIT_IMAGE`, `REMOTE_NAMESPACE`, `ARGO_REMOTE_SERVER`.
 
 ## S3 (OVH or other S3-compatible)
 
@@ -94,10 +94,18 @@ make events-apply
 
 Set the `aoi` parameter if your image supports it.
 
-## Docs & spec
+## Docs, ADRs & spec
 
-- See `docs/` for details and troubleshooting.
+- See `docs/` for details and troubleshooting. For broader system decisions, refer to ADRs in the coordination repo:
+  - ADR-001 data pipeline orchestration architecture
+  - ADR-002 distributed processing scaling strategy
+  - ADR-003 cloud infrastructure deployment architecture
+  - ADR-101 GeoZarr specification implementation approach
+  - ADR-201 TiTiler service architecture design
+  - ADR-202 Web API parameter design
 - GeoZarr: https://geozarr.readthedocs.io/
+
+Container image registry: https://github.com/orgs/EOPF-Explorer/packages/container/eopf-geozarr
 
 ## License
 
