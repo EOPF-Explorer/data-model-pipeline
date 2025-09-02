@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Helper to run argo CLI against a remote Argo Workflows server using env vars.
-# Respects:
+# Run argo CLI against a remote Argo Workflows server via env vars.
+# Env:
 #   ARGO_REMOTE_SERVER   - URL or host[:port]
 #   REMOTE_NAMESPACE     - target namespace
-#   ARGO_AUTH_MODE       - e.g., sso (if supported by your argo CLI)
+#   ARGO_AUTH_MODE       - e.g., sso (if supported)
 #   ARGO_TLS_INSECURE    - 'true' to skip TLS verification (if supported)
 #   ARGO_CA_FILE         - path to CA bundle (if supported)
 
@@ -36,7 +36,7 @@ case "$SERVER_ADDR" in
 esac
 NS_TRIM=$(printf '%s' "${REMOTE_NAMESPACE:-default}" | tr -d '[:space:]')
 
-# Build environment
+# Build environment for remote server
 ENV_ARGS=("ARGO_SERVER=${SERVER_ADDR}" "ARGO_HTTP1=true" "ARGO_SECURE=true" "KUBECONFIG=/dev/null")
 if [[ "${ARGO_TLS_INSECURE:-}" == "true" ]]; then
   ENV_ARGS+=("ARGO_INSECURE_SKIP_VERIFY=true")

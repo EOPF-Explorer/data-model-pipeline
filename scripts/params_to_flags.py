@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-import json, sys, shlex
+import json
+import sys
+import shlex
+
 
 def main(path):
     with open(path, "r", encoding="utf-8") as f:
@@ -12,14 +15,20 @@ def main(path):
             param_list = data["arguments"].get("parameters", [])
         elif "parameters" in data:
             param_list = data["parameters"]
+    # Emit flags only for non-empty values so Argo doesn't get -p name='' which can confuse downstream CLIs.
     for p in param_list:
         name = p.get("name")
         val = p.get("value", "")
         if name is None:
             continue
-        # shell-quote values defensively
-        params.append(f"-p {name}={shlex.quote(str(val))}")
+        sval = str(val) if val is not None else ""
+        # Skip empty values to avoid passing literal "''" to Argo (use template defaults)
+        if sval.strip() == "":
+            continue
+        # shell-quote non-empty values defensively
+        params.append(f"-p {name}={shlex.quote(sval)}")
     print(" ".join(params))
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

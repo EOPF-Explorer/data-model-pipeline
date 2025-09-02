@@ -7,11 +7,9 @@ TAG ?= dev
 
 # Build platform for the remote cluster
 REMOTE_PLATFORM ?= linux/amd64
-# Build behavior
-NO_CACHE ?=
-PULL ?=
-# Derived docker build flags from toggles (set NO_CACHE=true and/or PULL=true)
-DOCKER_BUILD_ARGS := $(if $(filter true,$(PULL)),--pull,) $(if $(filter true,$(NO_CACHE)),--no-cache,)
+# Build behavior (set FORCE=true to pull+no-cache)
+FORCE ?=
+DOCKER_BUILD_ARGS := $(if $(filter true,$(FORCE)),--pull --no-cache,)
 
 # Workflow params
 PARAMS_FILE ?= params.json
@@ -39,24 +37,21 @@ GHCR_REGISTRY ?= ghcr.io
 GHCR_IMAGE := $(GHCR_REGISTRY)/$(GHCR_ORG_LC)/$(GHCR_REPO_LC):$(TAG)
 SUBMIT_IMAGE ?= $(GHCR_IMAGE)
 
-.PHONY: help publish publish-force template template-force submit logs get ui up up-force doctor env events-apply events-delete
+.PHONY: help init publish template submit logs get ui up doctor env events-apply events-delete
 
 help:
 	@echo "Remote Argo quickstart:"
-	@echo "  1) Export your UI token and server:" \
-	      "export ARGO_TOKEN='Bearer <paste-from-UI>'" \
-	      " ARGO_REMOTE_SERVER=$(ARGO_REMOTE_SERVER)"
-	@echo "  2) One-shot run (check + build+push + apply + submit):"
-	@echo "     make up TAG=$(TAG)"
-	@echo "     Fast re-run (submit only, same image):"
-	@echo "     make submit"
-	@echo "  3) Tail logs:                                make logs"
-	@echo "  4) Inspect latest workflow:                  make get"
-	@echo "  5) Open namespace UI:                        make ui"
-	@echo "  Tip: force rebuild to bypass cache:          make up-force  (or: make publish-force)"
-	@echo "  6) (Optional) Wire AMQP → Argo Events:       make events-apply"
-	@echo "Vars you can override: GHCR_ORG, GHCR_REPO, TAG, REMOTE_NAMESPACE, SUBMIT_IMAGE"
-	@echo "Secrets: create OVH S3 creds (do not commit): make secret-ovh-s3 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=..."
+	@echo "  1) One-time init (exec bits, env check):     make init"
+	@echo "  2) Build+push image and run:                 make up [TAG=$(TAG)] [FORCE=true]"
+	@echo "  3) Re-apply template (if changed):           make template"
+	@echo "  4) Submit again (same image/params):         make submit [PARAMS_FILE=params.json]"
+	@echo "  5) Tail logs / open UI:                      make logs | make ui"
+	@echo "Vars: GHCR_ORG, GHCR_REPO, TAG, REMOTE_NAMESPACE, SUBMIT_IMAGE"
+	@echo "Secrets: S3 creds (do not commit):             make secret-ovh-s3 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=..."
+
+init:
+	@chmod +x ./scripts/*.sh || true
+	@$(MAKE) doctor
 
 # ---- Docker image (remote platform) ----
 publish:
@@ -66,46 +61,24 @@ publish:
 	docker push $(GHCR_IMAGE)
 	@echo "Published to $(GHCR_IMAGE)"
 
-publish-force:
-	@echo "Building (force) $(GHCR_IMAGE) for $(REMOTE_PLATFORM) ..."
-	docker build --pull --no-cache --platform $(REMOTE_PLATFORM) -f docker/Dockerfile -t $(GHCR_IMAGE) .
-	@echo "Pushing $(GHCR_IMAGE) ..."
-	docker push $(GHCR_IMAGE)
-	@echo "Published (force) to $(GHCR_IMAGE)"
-
 # ---- Remote Argo helpers ----
 
 template:
-	@chmod +x ./scripts/argo_remote.sh || true
-		@[ -f workflows/geozarr-convert-template.yaml ] || { echo "workflow template missing"; exit 2; }
-		@echo "Applying WorkflowTemplate to $(ARGO_REMOTE_SERVER) in ns=$(REMOTE_NAMESPACE) ..."
-		# Try create → update → delete+create (for older CLIs)
-		@./scripts/argo_remote.sh template create workflows/geozarr-convert-template.yaml \
-		|| ./scripts/argo_remote.sh template update workflows/geozarr-convert-template.yaml \
-		|| ( ./scripts/argo_remote.sh template delete geozarr-convert || true; \
-				 ./scripts/argo_remote.sh template create workflows/geozarr-convert-template.yaml )
+	@[ -f workflows/geozarr-convert-template.yaml ] || { echo "workflow template missing"; exit 2; }
+	@echo "Applying WorkflowTemplate to $(ARGO_REMOTE_SERVER) in ns=$(REMOTE_NAMESPACE) ..."
+	# Try update → create
+	@./scripts/argo_remote.sh template update workflows/geozarr-convert-template.yaml \
+	|| ./scripts/argo_remote.sh template create workflows/geozarr-convert-template.yaml
 
 # (template-delete and template-force removed; template handles update/replace fallback)
 
 submit:
-	@chmod +x ./scripts/argo_remote.sh ./scripts/argo_submit_workflow.sh || true
 	@SUBMIT_IMAGE=$(SUBMIT_IMAGE) PARAMS_FILE=$(PARAMS_FILE) REMOTE_SERVICE_ACCOUNT=$(REMOTE_SERVICE_ACCOUNT) \
 		./scripts/argo_submit_workflow.sh
 # (submit-remote alias removed)
 
-up: doctor publish template submit
+up: publish template submit
 	@echo "Tip: use 'make logs' to follow the latest run."
-
-up-force: doctor publish-force template-force submit
-	@echo "Tip: use 'make logs' to follow the latest run."
-
-# Force replace the WorkflowTemplate (delete then create)
-template-force:
-	@chmod +x ./scripts/argo_remote.sh || true
-	@[ -f workflows/geozarr-convert-template.yaml ] || { echo "workflow template missing"; exit 2; }
-	@echo "Force replacing WorkflowTemplate in ns=$(REMOTE_NAMESPACE) ..."
-	@./scripts/argo_remote.sh template delete geozarr-convert || true
-	@./scripts/argo_remote.sh template create workflows/geozarr-convert-template.yaml
 
 logs:
 		@( ./scripts/argo_remote.sh logs @latest -c main -f || ./scripts/argo_remote.sh logs @latest -f ) | sed -u 's/\r//g'

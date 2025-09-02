@@ -23,8 +23,8 @@ spec:
   dependencies:
     - name: stac-items
       eventSourceName: geozarr-amqp
-  # TODO: set your real RabbitMQ URL and vhost.
-      eventName: stac-items
+    eventName: stac-items
+  # TODO: set your real RabbitMQ URL and vhost in the EventSource above.
   triggers:
     - template:
         argoWorkflow:
@@ -50,9 +50,7 @@ spec:
                     - name: output_zarr
                       value: "/data/{{sprig.trimSuffix \".zarr\" (sprig.basename (index eventBody \"properties\" \"href\"))}}_geozarr.zarr"
                     - name: groups
-                      value: "measurements/reflectance/r20m"
-                    - name: validate_groups
-                      value: "false"
+                      value: "{{eventBody.properties.groups}}"
                     - name: register_url
                       value: "{{eventBody.properties.register_url}}"
                     - name: register_collection
