@@ -1,4 +1,3 @@
-
 # data-model-pipeline — Explainer & Optimization Brief (for LLMs)
 
 This repo is an **Argo-native orchestration layer** that converts **STAC Zarr** items into **GeoZarr** using the `eopf-geozarr` CLI from the upstream **data-model** repo (`EOPF-Explorer/data-model`). It supplies the **runner image**, the **Argo WorkflowTemplate**, a small **Bash wrapper** around the CLI, and **Make targets** for a smooth local-dev loop on **k3d/k3s**.
@@ -198,9 +197,7 @@ kubectl -n argo describe rs $(kubectl -n argo get rs -l app=workflow-controller 
 
 ---
 
-**Contact surface for the next LLM**  
-If you’re optimizing this further, start by:
-1) Reducing Docker image size while preserving GDAL/rasterio ergonomics.  
-2) Turning preflight into a tiny Python entrypoint (cleaner logging, unit tests).  
-3) Folding controller/bootstrap checks into `make doctor` with clear remedies.  
+# Explainer (archived)
+
+For the current system overview, see `docs/00-overview.md` and the main README.
 

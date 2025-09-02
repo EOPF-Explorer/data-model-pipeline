@@ -38,3 +38,9 @@
 - Reintroducing dev-only knobs (`dask_perf_html`) into the template.
 - Changing positional CLI to long flags for input/output.
 - Moving outputs outside `/data` in the container.
+
+# Design brief (archived)
+
+This file summarized historical constraints for refactors.
+
+Current behavior and parameters are documented in README and docs/.
