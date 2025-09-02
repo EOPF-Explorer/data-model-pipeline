@@ -19,7 +19,7 @@ spec:
   arguments:
     parameters:
       - name: image
-        value: "eopf-geozarr:dev"
+        value: "ghcr.io/eopf-explorer/eopf-geozarr:dev"
       - name: stac_url
         value: "https://example.invalid/in.zarr"
       - name: output_zarr

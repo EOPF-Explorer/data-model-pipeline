@@ -1,8 +1,8 @@
 # Minimal remote-first Makefile for running GeoZarr conversions on a remote Argo Workflows cluster
 
-# Image/tag (Docker Hub)
-DOCKERHUB_ORG ?= wietzesuijker
-DOCKERHUB_REPO ?= eopf-geozarr
+# Image/tag (GHCR)
+GHCR_ORG ?= EOPF-Explorer
+GHCR_REPO ?= eopf-geozarr
 TAG ?= dev
 
 # Build platform for the remote cluster
@@ -33,10 +33,11 @@ export ARGO_TLS_INSECURE
 export ARGO_CA_FILE
 
 # Derived
-DOCKERHUB_ORG_LC := $(shell printf '%s' '$(DOCKERHUB_ORG)' | tr '[:upper:]' '[:lower:]')
-DOCKERHUB_REPO_LC := $(shell printf '%s' '$(DOCKERHUB_REPO)' | tr '[:upper:]' '[:lower:]')
-DOCKERHUB_IMAGE := docker.io/$(DOCKERHUB_ORG_LC)/$(DOCKERHUB_REPO_LC):$(TAG)
-SUBMIT_IMAGE ?= $(DOCKERHUB_IMAGE)
+GHCR_ORG_LC := $(shell printf '%s' '$(GHCR_ORG)' | tr '[:upper:]' '[:lower:]')
+GHCR_REPO_LC := $(shell printf '%s' '$(GHCR_REPO)' | tr '[:upper:]' '[:lower:]')
+GHCR_REGISTRY ?= ghcr.io
+GHCR_IMAGE := $(GHCR_REGISTRY)/$(GHCR_ORG_LC)/$(GHCR_REPO_LC):$(TAG)
+SUBMIT_IMAGE ?= $(GHCR_IMAGE)
 
 .PHONY: help publish publish-force template submit logs get ui up up-force doctor env events-apply events-delete
 
@@ -54,23 +55,23 @@ help:
 	@echo "  5) Open namespace UI:                        make ui"
 	@echo "  Tip: force rebuild to bypass cache:          make up-force  (or: make publish-force)"
 	@echo "  6) (Optional) Wire AMQP → Argo Events:       make events-apply"
-	@echo "Vars you can override: DOCKERHUB_ORG, DOCKERHUB_REPO, TAG, REMOTE_NAMESPACE, SUBMIT_IMAGE"
+	@echo "Vars you can override: GHCR_ORG, GHCR_REPO, TAG, REMOTE_NAMESPACE, SUBMIT_IMAGE"
 	@echo "Secrets: create OVH S3 creds (do not commit): make secret-ovh-s3 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=..."
 
 # ---- Docker image (remote platform) ----
 publish:
-	@echo "Building $(DOCKERHUB_IMAGE) for $(REMOTE_PLATFORM) ..."
-	docker build $(DOCKER_BUILD_ARGS) --platform $(REMOTE_PLATFORM) -f docker/Dockerfile -t $(DOCKERHUB_IMAGE) .
-	@echo "Pushing $(DOCKERHUB_IMAGE) ..."
-	docker push $(DOCKERHUB_IMAGE)
-	@echo "Published to $(DOCKERHUB_IMAGE)"
+	@echo "Building $(GHCR_IMAGE) for $(REMOTE_PLATFORM) ..."
+	docker build $(DOCKER_BUILD_ARGS) --platform $(REMOTE_PLATFORM) -f docker/Dockerfile -t $(GHCR_IMAGE) .
+	@echo "Pushing $(GHCR_IMAGE) ..."
+	docker push $(GHCR_IMAGE)
+	@echo "Published to $(GHCR_IMAGE)"
 
 publish-force:
-	@echo "Building (force) $(DOCKERHUB_IMAGE) for $(REMOTE_PLATFORM) ..."
-	docker build --pull --no-cache --platform $(REMOTE_PLATFORM) -f docker/Dockerfile -t $(DOCKERHUB_IMAGE) .
-	@echo "Pushing $(DOCKERHUB_IMAGE) ..."
-	docker push $(DOCKERHUB_IMAGE)
-	@echo "Published (force) to $(DOCKERHUB_IMAGE)"
+	@echo "Building (force) $(GHCR_IMAGE) for $(REMOTE_PLATFORM) ..."
+	docker build --pull --no-cache --platform $(REMOTE_PLATFORM) -f docker/Dockerfile -t $(GHCR_IMAGE) .
+	@echo "Pushing $(GHCR_IMAGE) ..."
+	docker push $(GHCR_IMAGE)
+	@echo "Published (force) to $(GHCR_IMAGE)"
 
 # ---- Remote Argo helpers ----
 
