@@ -1,6 +1,6 @@
 # Data Model Pipeline → GeoZarr (Remote Argo)
 
-Run `eopf-geozarr` on a remote Argo Workflows cluster. This repo is remote‑first and intentionally lean; for converter details see the data-model repo.
+Run `eopf-geozarr` on a remote Argo Workflows cluster. The workflow is remote‑first and intentionally lean; for converter details see the data-model repo.
 
 ## TL;DR
 
@@ -27,7 +27,7 @@ make submit TAG=mytag
 
 ## What this repo contains
 
-- `workflows/geozarr-convert-template.yaml` — WorkflowTemplate: convert → register (two-node DAG).
+- `workflows/geozarr-convert-template.yaml` — WorkflowTemplate: convert → upload-s3 → register (three-node DAG).
 - `params.json` — arguments for runs (stac_url, output_zarr, groups, validate_groups, optional register_*).
 - `Makefile` — concise remote UX: build/publish, template, submit, logs, get, ui, up, doctor.
 - `docker/Dockerfile` — image with `eopf-geozarr` installed (use if you need changes from the default image).
@@ -40,19 +40,26 @@ Note: `.work/` holds ephemeral local state and should not be committed.
 {
   "arguments": {
     "parameters": [
-      {"name": "stac_url", "value": "https://…/S2…/scene.zarr"},
+  {"name": "stac_url", "value": "https://…/S2…/scene.zarr"},
       {"name": "output_zarr", "value": "/data/scene_geozarr.zarr"},
       {"name": "groups", "value": "measurements/reflectance/r20m"},
       {"name": "validate_groups", "value": "false"},
+  {"name": "aoi", "value": ""},
       {"name": "register_url", "value": ""},
       {"name": "register_collection", "value": ""},
-      {"name": "register_bearer_token", "value": ""}
+  {"name": "register_bearer_token", "value": ""},
+  {"name": "register_href", "value": ""},
+  {"name": "s3_endpoint", "value": "https://s3.de.io.cloud.ovh.net"},
+  {"name": "s3_bucket", "value": ""},
+  {"name": "s3_key", "value": ""}
     ]
   }
 }
 ```
 
-Notes: `output_zarr` is on the workflow’s PVC at `/data`; `groups` accepts space/comma; `validate_groups=true` will fail when a group is missing. Registration posts an Item to `{register_url}/collections/{register_collection}/items` if provided.
+Notes: `output_zarr` is on the workflow’s PVC at `/data`; `groups` accepts space/comma; `validate_groups=true` will fail when a group is missing. 
+
+Registration (optional) posts an Item to `{register_url}/collections/{register_collection}/items` if provided. If you don’t set `register_href`, the workflow will derive the asset href from the S3 settings (`s3_endpoint` + `s3_bucket` + `s3_key`) when a bucket is set.
 
 ## Common commands
 
@@ -89,9 +96,10 @@ Parameters (optional):
 - `s3_bucket` (e.g., `esa-zarr-sentinel-explorer-fra`)
 - `s3_key` (object key; defaults to basename of output_zarr)
 
-Example snippet in `params.json`:
+Credentials:
 
-Create a Kubernetes Secret named `ovh-s3-creds` in your remote namespace with keys `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (values from OpenStack EC2 credentials). The workflow will pick them up automatically via envFrom:
+- Preferred: create a Kubernetes Secret named `ovh-s3-creds` in your remote namespace with keys `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (values from OpenStack EC2 credentials). The workflow will pick them up automatically via envFrom.
+- Optional: you can also export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in your shell before `make submit`; the submit script will pass them to the workflow as ephemeral parameters (they’re not stored in `params.json`).
 
 ```bash
 kubectl -n devseed create secret generic ovh-s3-creds \

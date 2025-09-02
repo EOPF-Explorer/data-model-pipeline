@@ -117,7 +117,7 @@ doctor:
 	if [ -z "$(REMOTE_NAMESPACE)" ]; then echo "[doctor] REMOTE_NAMESPACE not set" >&2; ok=0; fi; \
 	if [ "$$ok" -eq 0 ]; then exit 2; fi; \
 	echo "[doctor] Checking remote connectivity ..."; \
-	./scripts/argo_remote.sh list >/dev/null 2>&1 || ./scripts/argo_remote.sh get wf >/dev/null 2>&1 || echo "[doctor] argo CLI reachable"; \
+	./scripts/argo_remote.sh list >/dev/null 2>&1 || ./scripts/argo_remote.sh get wf >/dev/null 2>&1 || true; \
 	echo "[doctor] OK: environment looks good."
 
 env:
