@@ -4,7 +4,7 @@
 
 ## Storage
 - Start with OVH Block Storage (RWO PVC) to mirror local behavior.
-- For higher concurrency and read/write throughput, plan for **object store outputs** (Swift/S3 API). Container writes directly to object storage; PVC only for scratch.
+- Object store outputs (S3 API) are already supported via the `upload-s3` task; the PVC is used for scratch and conversion output before upload.
 
 ## Scaling
 - Increase throughput by fan-out per *group/band/tile*. Use a DAG with parallel steps.

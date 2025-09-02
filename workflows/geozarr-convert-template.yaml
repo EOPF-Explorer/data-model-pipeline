@@ -57,6 +57,7 @@ spec:
         resources:
           requests:
             storage: 50Gi
+  # Tip: adjust storage size per dataset if needed.
   templates:
     - name: pipeline
       dag:
@@ -185,6 +186,8 @@ spec:
           - secretRef:
               name: ovh-s3-creds
               optional: true
+  # Credentials are preferably provided via the ovh-s3-creds Secret.
+  # As a fallback, submit can pass s3_access_key/s3_secret_key params.
         command: [/bin/bash, -lc]
         args:
           - |

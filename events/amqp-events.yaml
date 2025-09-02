@@ -23,10 +23,11 @@ spec:
   dependencies:
     - name: stac-items
       eventSourceName: geozarr-amqp
+  # TODO: set your real RabbitMQ URL and vhost.
       eventName: stac-items
   triggers:
     - template:
-        name: submit-geozarr-convert
+  # The routingKey should match your publisher.
         argoWorkflow:
           group: argoproj.io
           version: v1alpha1
@@ -59,6 +60,7 @@ spec:
                     - name: register_url
                       value: "{{eventBody.properties.register_url}}"
                     - name: register_collection
+        # Map other fields as needed. See README.
                       value: "{{eventBody.properties.collection}}"
                     - name: register_bearer_token
                       value: ""
