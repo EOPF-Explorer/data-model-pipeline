@@ -1,99 +1,80 @@
 # Data Model Pipeline → GeoZarr (Remote Argo)
 
-Run `eopf-geozarr` on a remote Argo Workflows cluster. The workflow is remote‑first and intentionally lean; for converter details see the data-model repo.
+Run the GeoZarr conversion on a remote Argo Workflows cluster. The pipeline is a simple two-step DAG: convert → register. Output to a PVC path or directly to S3.
 
-## TL;DR
+## Quick start
 
 ```bash
-# 0) One-time: get a UI token from Argo and export it in your shell
+# Get a UI token from Argo and export it
 export ARGO_TOKEN='Bearer <paste-from-UI>'
 
-# 1) Quick one-shot (apply template + submit using params.json)
+# Apply template + submit with params.json
 make up
 
-# 2) Watch logs
+# Follow logs / open UI
 make logs
-
-# 3) Open UI (namespace view)
 make ui
 ```
 
-Want a custom image? Build and publish to Docker Hub, then submit:
+Custom image (optional):
 
 ```bash
 make publish TAG=mytag
 make submit TAG=mytag
 ```
 
-## What this repo contains
+## What’s here
 
- - `workflows/geozarr-convert-template.yaml` — WorkflowTemplate: convert → register (two-node DAG). Output can be a PVC path or an s3:// URL.
-- `params.json` — arguments for runs (stac_url, output_zarr, groups, validate_groups, optional register_*).
-- `Makefile` — concise remote UX: build/publish, template, submit, logs, get, ui, up, doctor.
-- `docker/Dockerfile` — image with `eopf-geozarr` installed (use if you need changes from the default image).
-  
-Note: `.work/` holds ephemeral local state and should not be committed.
+- `workflows/geozarr-convert-template.yaml` — WorkflowTemplate (convert → register)
+- `params.json` — run arguments (see below)
+- `Makefile` — build/publish, template, submit, logs, ui, doctor
+- `docker/Dockerfile` — base image with `eopf-geozarr`
+
+`.work/` contains local, ephemeral state.
 
 ## Parameters (edit `params.json`)
+
+Minimal example:
 
 ```json
 {
   "arguments": {
     "parameters": [
-  {"name": "stac_url", "value": "https://…/S2…/scene.zarr"},
+      {"name": "stac_url", "value": "https://…/scene.zarr"},
       {"name": "output_zarr", "value": "/data/scene_geozarr.zarr"},
       {"name": "groups", "value": "measurements/reflectance/r20m"},
       {"name": "validate_groups", "value": "false"},
-  {"name": "aoi", "value": ""},
+      {"name": "aoi", "value": ""},
       {"name": "register_url", "value": ""},
       {"name": "register_collection", "value": ""},
-  {"name": "register_bearer_token", "value": ""},
-  {"name": "register_href", "value": ""},
-  {"name": "s3_endpoint", "value": "https://s3.de.io.cloud.ovh.net"},
-  {"name": "s3_bucket", "value": ""},
-  {"name": "s3_key", "value": ""}
+      {"name": "register_bearer_token", "value": ""},
+      {"name": "register_href", "value": ""},
+      {"name": "s3_endpoint", "value": "https://s3.de.io.cloud.ovh.net"}
     ]
   }
 }
 ```
 
-Notes: `output_zarr` is on the workflow’s PVC at `/data`; `groups` accepts space/comma; `validate_groups=true` will fail when a group is missing. 
-
-Registration (optional) posts an Item to `{register_url}/collections/{register_collection}/items` if provided. If you don’t set `register_href`, the workflow will derive the asset href from the S3 settings (`s3_endpoint` + `s3_bucket` + `s3_key`) when a bucket is set.
+Notes:
+- `output_zarr` can be a PVC path (e.g., `/data/...`) or `s3://bucket/key`.
+- `groups` can be comma/space separated. `validate_groups=true` fails if a group is missing.
+- Register is optional. If `register_href` is empty, href is derived from `output_zarr`. For `s3://` + `s3_endpoint`, it becomes `https://<endpoint>/<bucket>/<key>`.
 
 ## Common commands
 
-- `make up` — apply the template and submit immediately.
-- `make template` — apply/update the WorkflowTemplate (idempotent).
-- `make submit` — submit from the WorkflowTemplate using `params.json`.
-- `make logs` — tail the latest run.
-- `make get` — describe the latest workflow.
-- `make ui` — print a direct Argo UI namespace link.
-- `make doctor` — minimal env sanity checks.
-- `make events-apply` — (optional) apply RabbitMQ → Argo Events source & sensor to auto-submit on queue messages.
+- `make up` — apply template and submit
+- `make submit` — submit using `params.json`
+- `make logs` — tail latest run
+- `make ui` — print Argo UI link
+- `make doctor` — quick checks
 
-Overrideables: `DOCKERHUB_ORG`, `DOCKERHUB_REPO`, `TAG`, `SUBMIT_IMAGE`, `REMOTE_NAMESPACE`, `ARGO_REMOTE_SERVER`.
+Vars you can override: `DOCKERHUB_ORG`, `DOCKERHUB_REPO`, `TAG`, `SUBMIT_IMAGE`, `REMOTE_NAMESPACE`, `ARGO_REMOTE_SERVER`.
 
-## Optional: trigger via RabbitMQ (Argo Events)
+## S3 (OVH or other S3-compatible)
 
-If you already produce STAC item messages to a RabbitMQ exchange, you can have Argo auto-submit:
+Write directly to S3 by setting `output_zarr` to `s3://...` and, for non-AWS, `s3_endpoint`.
 
-1) Edit `events/amqp-events.yaml` and set your AMQP `url`, `exchangeName`, and `routingKey`.
-2) Apply to the cluster namespace:
-
-```bash
-make events-apply
-```
-
-Incoming messages populate workflow parameters (e.g., `stac_url`, `register_*`). Adjust the Sensor’s parameter mapping as needed.
-
-## OVHcloud Object Storage (S3-compatible)
-
-Write directly to S3 using fsspec/s3fs by setting `output_zarr` to an s3:// URL, e.g. `s3://esa-zarr-sentinel-explorer-fra/<item>_geozarr.zarr`. Set `s3_endpoint` if your S3 is not AWS (e.g., OVH).
-
-Credentials:
-
-- Preferred: create a Kubernetes Secret named `ovh-s3-creds` in your remote namespace with keys `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The workflow mounts it via envFrom.
+Credentials (recommended via K8s Secret in your namespace):
 
 ```bash
 kubectl -n devseed create secret generic ovh-s3-creds \
@@ -101,17 +82,23 @@ kubectl -n devseed create secret generic ovh-s3-creds \
   --from-literal=AWS_SECRET_ACCESS_KEY='<SECRET_KEY>'
 ```
 
-If `register_href` isn’t provided, the workflow derives the STAC asset href from `output_zarr`. For s3:// outputs and a provided `s3_endpoint`, it constructs `https://<endpoint>/<bucket>/<key>`.
+## Events (optional)
+
+To auto-submit from RabbitMQ, edit `events/amqp-events.yaml` (AMQP URL, exchange, routingKey) and:
+
+```bash
+make events-apply
+```
 
 ## AOI
 
-You can pass an `aoi` parameter through to the converter when supported by your image.
+Set the `aoi` parameter if your image supports it.
 
-## Design and specs
+## Docs & spec
 
-- See `docs/` in this repo for the workflow contract and operational notes.
-- GeoZarr spec: https://geozarr.readthedocs.io/
+- See `docs/` for details and troubleshooting.
+- GeoZarr: https://geozarr.readthedocs.io/
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE)
