@@ -12,26 +12,6 @@
             {
                 "name": "groups",
                 "value": "measurements/reflectance/r20m"
-            },
-            {
-                "name": "validate_groups",
-                "value": "false"
-            },
-            {
-                "name": "register_url",
-                "value": ""
-            },
-            {
-                "name": "register_collection",
-                "value": ""
-            },
-            {
-                "name": "register_bearer_token",
-                "value": ""
-            },
-            {
-                "name": "s3_endpoint",
-                "value": "https://s3.de.io.cloud.ovh.net"
             }
         ]
     }
