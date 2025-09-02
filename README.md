@@ -5,7 +5,7 @@ Run the GeoZarr conversion on a remote Argo Workflows cluster. The pipeline is a
 ## Quick start
 
 ```bash
-# Get a UI token from Argo and export it
+# Get a UI token from https://workspace.devseed.hub-eopf-explorer.eox.at/argo-workflows-server and export it
 export ARGO_TOKEN='Bearer <paste-from-UI>'
 
 # Apply template + submit with params.json
@@ -44,7 +44,6 @@ Minimal example:
       {"name": "output_zarr", "value": "/data/scene_geozarr.zarr"},
       {"name": "groups", "value": "measurements/reflectance/r20m"},
       {"name": "validate_groups", "value": "false"},
-      {"name": "aoi", "value": ""},
       {"name": "register_url", "value": ""},
       {"name": "register_collection", "value": ""},
       {"name": "register_bearer_token", "value": ""},
@@ -89,23 +88,6 @@ To auto-submit from RabbitMQ, edit `events/amqp-events.yaml` (AMQP URL, exchange
 ```bash
 make events-apply
 ```
-
-## AOI
-
-Set the `aoi` parameter if your image supports it.
-
-## Docs, ADRs & spec
-
-- See `docs/` for details and troubleshooting. For broader system decisions, refer to ADRs in the coordination repo:
-  - ADR-001 data pipeline orchestration architecture
-  - ADR-002 distributed processing scaling strategy
-  - ADR-003 cloud infrastructure deployment architecture
-  - ADR-101 GeoZarr specification implementation approach
-  - ADR-201 TiTiler service architecture design
-  - ADR-202 Web API parameter design
-- GeoZarr: https://geozarr.readthedocs.io/
-
-Container image registry: https://github.com/orgs/EOPF-Explorer/packages/container/eopf-geozarr
 
 ## License
 

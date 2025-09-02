@@ -39,7 +39,7 @@ GHCR_REGISTRY ?= ghcr.io
 GHCR_IMAGE := $(GHCR_REGISTRY)/$(GHCR_ORG_LC)/$(GHCR_REPO_LC):$(TAG)
 SUBMIT_IMAGE ?= $(GHCR_IMAGE)
 
-.PHONY: help publish publish-force template submit logs get ui up up-force doctor env events-apply events-delete
+.PHONY: help publish publish-force template template-force submit logs get ui up up-force doctor env events-apply events-delete
 
 help:
 	@echo "Remote Argo quickstart:"
@@ -96,8 +96,16 @@ submit:
 up: doctor publish template submit
 	@echo "Tip: use 'make logs' to follow the latest run."
 
-up-force: doctor publish-force template submit
+up-force: doctor publish-force template-force submit
 	@echo "Tip: use 'make logs' to follow the latest run."
+
+# Force replace the WorkflowTemplate (delete then create)
+template-force:
+	@chmod +x ./scripts/argo_remote.sh || true
+	@[ -f workflows/geozarr-convert-template.yaml ] || { echo "workflow template missing"; exit 2; }
+	@echo "Force replacing WorkflowTemplate in ns=$(REMOTE_NAMESPACE) ..."
+	@./scripts/argo_remote.sh template delete geozarr-convert || true
+	@./scripts/argo_remote.sh template create workflows/geozarr-convert-template.yaml
 
 logs:
 		@( ./scripts/argo_remote.sh logs @latest -c main -f || ./scripts/argo_remote.sh logs @latest -f ) | sed -u 's/\r//g'

@@ -9,7 +9,6 @@
 | `output_zarr`           | arg   | `/data/out.zarr`                         | PVC or `s3://bucket/key` |
 | `groups`                | arg   | `measurements/reflectance/r20m`          | Comma/space list |
 | `validate_groups`       | arg   | `false`                                  | Fail on missing groups |
-| `aoi`                   | arg   | —                                        | Optional |
 | `register_url`          | arg   | —                                        | STAC base URL |
 | `register_collection`   | arg   | —                                        | Collection ID |
 | `register_bearer_token` | arg   | —                                        | Bearer token |
