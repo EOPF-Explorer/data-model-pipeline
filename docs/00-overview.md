@@ -4,7 +4,7 @@ Remote GeoZarr conversion on Argo Workflows. Two steps: convert → register.
 
 Essentials
 - Image: ghcr.io/EOPF-Explorer/eopf-geozarr
-- Inputs: `stac_url`, `groups` (comma/space), optional `aoi`
+- Inputs: `stac_url`, `groups` (comma/space)
 - Outputs: `/data/...` (PVC) or `s3://bucket/key` (set `s3_endpoint` for S3-compatible)
 - Optional: STAC register via `register_url` + `register_collection` (+ bearer token)
 
