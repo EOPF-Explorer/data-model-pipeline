@@ -27,11 +27,12 @@ spec:
       eventName: stac-items
   triggers:
     - template:
-  # The routingKey should match your publisher.
         argoWorkflow:
           group: argoproj.io
           version: v1alpha1
           resource: Workflow
+          operation: submit
+          source:
             resource:
               apiVersion: argoproj.io/v1alpha1
               kind: Workflow
@@ -41,11 +42,13 @@ spec:
               spec:
                 entrypoint: pipeline
                 workflowTemplateRef:
+                  name: geozarr-convert
+                arguments:
+                  parameters:
                     - name: stac_url
                       value: "{{eventBody.properties.href}}"
                     - name: output_zarr
-                      value: "/data/{{sprig.trimSuffix ".zarr" (sprig.basename (index eventBody "properties" "href"))}}_geozarr.zarr"
-                       # Updated to reflect no upload step; not strictly necessary but keeps consistency.
+                      value: "/data/{{sprig.trimSuffix \".zarr\" (sprig.basename (index eventBody \"properties\" \"href\"))}}_geozarr.zarr"
                     - name: groups
                       value: "measurements/reflectance/r20m"
                     - name: validate_groups
@@ -53,7 +56,6 @@ spec:
                     - name: register_url
                       value: "{{eventBody.properties.register_url}}"
                     - name: register_collection
-        # Map other fields as needed. See README.
                       value: "{{eventBody.properties.collection}}"
                     - name: register_bearer_token
                       value: ""
