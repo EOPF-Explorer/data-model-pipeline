@@ -186,7 +186,7 @@ spec:
               exit 0
             fi
 
-            ITEM_ID="$(basename "$OUT" | sed 's/\.[^.]*$//')"
+            ITEM_ID="$(basename "$OUT" | sed -E 's/(\.zarr)?(\.[^.]+)*$//')"
             if [ -n "$HREF_OVERRIDE" ]; then
               HREF_PLACEHOLDER="$HREF_OVERRIDE"
             else
@@ -196,7 +196,18 @@ spec:
                   PATH_NO_SCHEME="${OUT#s3://}"
                   BUCKET="${PATH_NO_SCHEME%%/*}"
                   KEY="${PATH_NO_SCHEME#*/}"
-                  HREF_PLACEHOLDER="${ENDPOINT%/}/$BUCKET/$KEY"
+                  # Try to handle both path-style and virtual-hosted-style endpoints
+                  if printf '%s' "$ENDPOINT" | grep -q "$BUCKET"; then
+                    # Virtual-hosted style: https://bucket.endpoint/key
+                    HREF_PLACEHOLDER="${ENDPOINT%/}/$KEY"
+                  else
+                    # Path-style: https://endpoint/bucket/key
+                    HREF_PLACEHOLDER="${ENDPOINT%/}/$BUCKET/$KEY"
+                  fi
+                  # Fallback to original OUT if endpoint format isn't http(s)
+                  if ! printf '%s' "$HREF_PLACEHOLDER" | grep -qE '^https?://'; then
+                    HREF_PLACEHOLDER="$OUT"
+                  fi
                 else
                   HREF_PLACEHOLDER="$OUT"
                 fi
