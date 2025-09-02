@@ -31,6 +31,8 @@ make submit TAG=mytag
 - `params.json` — arguments for runs (stac_url, output_zarr, groups, validate_groups, optional register_*).
 - `Makefile` — concise remote UX: build/publish, template, submit, logs, get, ui, up, doctor.
 - `docker/Dockerfile` — image with `eopf-geozarr` installed (use if you need changes from the default image).
+  
+Note: `.work/` holds ephemeral local state and should not be committed.
 
 ## Parameters (edit `params.json`)
 
