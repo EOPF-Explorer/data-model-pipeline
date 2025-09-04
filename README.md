@@ -172,6 +172,11 @@ kubectl -n devseed create secret generic ovh-s3-creds \
   --from-literal=AWS_SECRET_ACCESS_KEY='<SECRET_KEY>'
 ```
 
+Publish to OVH example
+- Use `params.ovh.json` with `output_zarr=s3://esa-zarr-sentinel-explorer-fra/...` and `s3_endpoint=https://s3.de.io.cloud.ovh.net`
+- Optionally set region/addressing: `s3_region=de`, `aws_addressing_style=path`
+- Run: `make submit PARAMS_FILE=params.ovh.json`
+
 ## Common commands
 
 - make init — one-time setup (exec bits) + env check

@@ -37,6 +37,19 @@ spec:
       # Optional S3-compatible endpoint for direct writes (e.g., OVHcloud)
       - name: s3_endpoint
         value: "https://s3.de.io.cloud.ovh.net"
+      - name: s3_region
+        value: "de"
+      - name: aws_addressing_style
+        value: "path"
+      # Optional inline AWS credentials (use only if you cannot create the K8s secret)
+      - name: aws_access_key_id
+        value: ""
+      - name: aws_secret_access_key
+        value: ""
+      - name: aws_session_token
+        value: ""
+      - name: overwrite
+        value: "false"
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -59,6 +72,12 @@ spec:
                 - { name: output_zarr, value: "{{workflow.parameters.output_zarr}}" }
                 - { name: groups, value: "{{workflow.parameters.groups}}" }
                 - { name: s3_endpoint, value: "{{workflow.parameters.s3_endpoint}}" }
+                - { name: s3_region, value: "{{workflow.parameters.s3_region}}" }
+                - { name: aws_addressing_style, value: "{{workflow.parameters.aws_addressing_style}}" }
+                - { name: aws_access_key_id, value: "{{workflow.parameters.aws_access_key_id}}" }
+                - { name: aws_secret_access_key, value: "{{workflow.parameters.aws_secret_access_key}}" }
+                - { name: aws_session_token, value: "{{workflow.parameters.aws_session_token}}" }
+                - { name: overwrite, value: "{{workflow.parameters.overwrite}}" }
           - name: register
             dependencies: [convert]
             template: register-stac
@@ -80,6 +99,12 @@ spec:
           - name: output_zarr
           - name: groups
           - name: s3_endpoint
+          - name: s3_region
+          - name: aws_addressing_style
+          - name: aws_access_key_id
+          - name: aws_secret_access_key
+          - name: aws_session_token
+          - name: overwrite
       container:
         image: "{{inputs.parameters.image}}"
         imagePullPolicy: Always
@@ -94,6 +119,13 @@ spec:
           - secretRef:
               name: ovh-s3-creds
               optional: true
+        env:
+          - name: AWS_DEFAULT_REGION
+            value: "{{inputs.parameters.s3_region}}"
+          - name: AWS_REGION
+            value: "{{inputs.parameters.s3_region}}"
+          - name: AWS_S3_ADDRESSING_STYLE
+            value: "{{inputs.parameters.aws_addressing_style}}"
         command: [/bin/bash, -lc]
         args:
           - |
@@ -102,6 +134,24 @@ spec:
             if [ -n "{{inputs.parameters.s3_endpoint}}" ]; then
               export AWS_S3_ENDPOINT="{{inputs.parameters.s3_endpoint}}"
               export AWS_ENDPOINT_URL="{{inputs.parameters.s3_endpoint}}"
+            fi
+
+            # Optional inline AWS credentials (fallback if secret not present)
+            if [ -n "{{inputs.parameters.aws_access_key_id}}" ]; then
+              export AWS_ACCESS_KEY_ID="{{inputs.parameters.aws_access_key_id}}"
+            fi
+            if [ -n "{{inputs.parameters.aws_secret_access_key}}" ]; then
+              export AWS_SECRET_ACCESS_KEY="{{inputs.parameters.aws_secret_access_key}}"
+            fi
+            if [ -n "{{inputs.parameters.aws_session_token}}" ]; then
+              export AWS_SESSION_TOKEN="{{inputs.parameters.aws_session_token}}"
+            fi
+
+            # If overwrite requested, delete existing destination (S3 prefix or local dir)
+            if [ "{{inputs.parameters.overwrite}}" = "true" ]; then
+              echo "[convert] Overwrite=true: deleting existing destination {{inputs.parameters.output_zarr}} ..."
+              DEST="{{inputs.parameters.output_zarr}}"
+              env DEST="$DEST" python -c 'import os,shutil,pathlib,fsspec as F; d=os.environ.get("DEST"); S={}; ep=os.environ.get("AWS_ENDPOINT_URL"); adr=os.environ.get("AWS_S3_ADDRESSING_STYLE"); S.update({"client_kwargs":{"endpoint_url": ep}}) if ep else None; S.update({"config_kwargs":{"s3":{"addressing_style": adr}}}) if adr else None; 0 if not d else (F.filesystem("s3", **S).rm(d, recursive=True) if d.startswith("s3://") else (shutil.rmtree(d) if pathlib.Path(d).exists() else 0))' || true
             fi
 
             # Normalize groups: accept comma/space separated; ensure single leading '/'
