@@ -1,0 +1,143 @@
+## Bootstrap Argo token workflow
+##
+## Creates a ServiceAccount + Role/Binding (if needed) and mints a long-lived
+## token using the TokenRequest API. The token is emitted as an output parameter
+## and captured by scripts/bootstrap_argo_token.sh into .work/argo.token.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bootstrap-argo-token-
+spec:
+  serviceAccountName: devseed
+  entrypoint: main
+  arguments:
+    parameters:
+      - name: namespace
+        value: devseed
+      - name: sa_name
+        value: dmclient
+      - name: role_name
+        value: dmclient
+      - name: secret_name
+        value: dmclient.service-account-token
+      - name: runner_sa
+        value: devseed
+      - name: token_duration
+        value: 4320h
+  templates:
+    - name: main
+      steps:
+        - - name: apply-role
+            template: apply-role
+          - name: apply-sa
+            template: apply-sa
+          - name: apply-rb
+            template: apply-rb
+          - name: apply-token-role
+            template: apply-token-role
+          - name: apply-token-rb
+            template: apply-token-rb
+        - - name: mint-token
+            template: mint-token
+      outputs:
+        parameters:
+          - name: argo_token
+            valueFrom:
+              parameter: "{{steps.mint-token.outputs.parameters.argo_token}}"
+    - name: apply-role
+      resource:
+        action: apply
+        manifest: |
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: {{workflow.parameters.role_name}}
+            namespace: {{workflow.parameters.namespace}}
+          rules:
+            - apiGroups: ["argoproj.io"]
+              resources: ["workflows"]
+              verbs: ["get","list","watch","create","update"]
+            - apiGroups: [""]
+              resources: ["pods","pods/log"]
+              verbs: ["get","list","watch"]
+            - apiGroups: [""]
+              resources: ["secrets"]
+              verbs: ["get"]
+            - apiGroups: [""]
+              resources: ["serviceaccounts/token"]
+              verbs: ["create"]
+    - name: apply-sa
+      resource:
+        action: apply
+        manifest: |
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: {{workflow.parameters.sa_name}}
+            namespace: {{workflow.parameters.namespace}}
+    - name: apply-rb
+      resource:
+        action: apply
+        manifest: |
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: {{workflow.parameters.role_name}}
+            namespace: {{workflow.parameters.namespace}}
+          subjects:
+          - kind: ServiceAccount
+            name: {{workflow.parameters.sa_name}}
+            namespace: {{workflow.parameters.namespace}}
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: {{workflow.parameters.role_name}}
+    - name: apply-token-role
+      resource:
+        action: apply
+        manifest: |
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: token-issuer
+            namespace: {{workflow.parameters.namespace}}
+          rules:
+            - apiGroups: [""]
+              resources: ["serviceaccounts/token"]
+              verbs: ["create"]
+    - name: apply-token-rb
+      resource:
+        action: apply
+        manifest: |
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: token-issuer
+            namespace: {{workflow.parameters.namespace}}
+          subjects:
+          - kind: ServiceAccount
+            name: {{workflow.parameters.runner_sa}}
+            namespace: {{workflow.parameters.namespace}}
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: token-issuer
+    - name: mint-token
+      script:
+        image: bitnami/kubectl:1.29
+        command: [sh, -c]
+        source: |
+          set -eu
+          NS="{{workflow.parameters.namespace}}"
+          SA="{{workflow.parameters.sa_name}}"
+          # Request a long-lived token via TokenRequest API (requires create on serviceaccounts/token)
+          DURATION="{{workflow.parameters.token_duration}}"
+          TOKEN=$(kubectl -n "$NS" create token "$SA" --duration="$DURATION")
+          mkdir -p /tmp/outputs/parameters
+          printf "Bearer %s" "$TOKEN" > /tmp/outputs/parameters/argo_token
+      outputs:
+        parameters:
+          - name: argo_token
+            valueFrom:
+              path: /tmp/outputs/parameters/argo_token
