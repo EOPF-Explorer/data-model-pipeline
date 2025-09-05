@@ -7,7 +7,7 @@
             },
             {
                 "name": "output_zarr",
-                "value": "/data/S2B_MSIL2A_20250518_T29RLL_geozarr.zarr"
+                "value": "s3://esa-zarr-sentinel-explorer-fra/tests-output/eopf_geozarr/S2B_MSIL2A_20250518_T29RLL_geozarr.zarr"
             },
             {
                 "name": "groups",

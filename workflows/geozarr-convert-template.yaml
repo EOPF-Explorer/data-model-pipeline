@@ -1,14 +1,25 @@
+## GeoZarr conversion WorkflowTemplate
+##
+## What it does
+## - Runs a two-step flow: convert (required) → register (optional/WIP)
+## - Writes output directly to S3 (incl. S3-compatible backends like OVH)
+##
+## How to use
+## - Apply this template in your target namespace (the CLI sets -n for you)
+## - Submit with: --from workflowtemplate/geozarr-convert and pass parameters
+## - The service account can be overridden at submit time (see Makefile)
+##
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: geozarr-convert
-  namespace: devseed
   labels:
     app.kubernetes.io/name: geozarr-convert
     app.kubernetes.io/part-of: geozarr
     managed-by: argo
     example: "true"
 spec:
+  # Default service account; the submit script overrides this with --serviceaccount
   entrypoint: pipeline
   serviceAccountName: devseed
   workflowMetadata:
@@ -23,7 +34,7 @@ spec:
       - name: stac_url
         value: "https://example.invalid/in.zarr"
       - name: output_zarr
-        value: "/data/out.zarr"
+        value: "s3://bucket/out.zarr"
       - name: groups
         value: ""
       - name: register_url
@@ -37,6 +48,20 @@ spec:
       # Optional S3-compatible endpoint for direct writes (e.g., OVHcloud)
       - name: s3_endpoint
         value: "https://s3.de.io.cloud.ovh.net"
+      - name: s3_region
+        value: "de"
+      - name: aws_addressing_style
+        value: "path"
+      # Optional inline AWS credentials (use only if you cannot create the K8s secret)
+      - name: aws_access_key_id
+        value: ""
+      - name: aws_secret_access_key
+        value: ""
+      - name: aws_session_token
+        value: ""
+      # Name of the Kubernetes Secret containing AWS creds (best practice)
+      - name: s3_secret_name
+        value: "ovh-s3-creds"
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -59,8 +84,16 @@ spec:
                 - { name: output_zarr, value: "{{workflow.parameters.output_zarr}}" }
                 - { name: groups, value: "{{workflow.parameters.groups}}" }
                 - { name: s3_endpoint, value: "{{workflow.parameters.s3_endpoint}}" }
+                - { name: s3_region, value: "{{workflow.parameters.s3_region}}" }
+                - { name: aws_addressing_style, value: "{{workflow.parameters.aws_addressing_style}}" }
+                - { name: aws_access_key_id, value: "{{workflow.parameters.aws_access_key_id}}" }
+                - { name: aws_secret_access_key, value: "{{workflow.parameters.aws_secret_access_key}}" }
+                - { name: aws_session_token, value: "{{workflow.parameters.aws_session_token}}" }
+                - { name: s3_secret_name, value: "{{workflow.parameters.s3_secret_name}}" }
           - name: register
             dependencies: [convert]
+            # Only run when a register_url is provided (skip entirely otherwise)
+            when: "{{workflow.parameters.register_url}} != ''"
             template: register-stac
             arguments:
               parameters:
@@ -80,6 +113,12 @@ spec:
           - name: output_zarr
           - name: groups
           - name: s3_endpoint
+          - name: s3_region
+          - name: aws_addressing_style
+          - name: aws_access_key_id
+          - name: aws_secret_access_key
+          - name: aws_session_token
+          - name: s3_secret_name
       container:
         image: "{{inputs.parameters.image}}"
         imagePullPolicy: Always
@@ -90,21 +129,49 @@ spec:
           limits:
             cpu: "2"
             memory: "8Gi"
-        envFrom:
-          - secretRef:
-              name: ovh-s3-creds
-              optional: true
+        env:
+          # Prefer K8s Secret (best practice): explicit secret selectors
+          # Note: If the secret is missing and inline creds are provided below, those will be used.
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: "{{inputs.parameters.s3_secret_name}}"
+                key: AWS_ACCESS_KEY_ID
+                optional: true
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: "{{inputs.parameters.s3_secret_name}}"
+                key: AWS_SECRET_ACCESS_KEY
+                optional: true
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: "{{inputs.parameters.s3_secret_name}}"
+                key: AWS_SESSION_TOKEN
+                optional: true
+          - name: AWS_DEFAULT_REGION
+            value: "{{inputs.parameters.s3_region}}"
+          - name: AWS_REGION
+            value: "{{inputs.parameters.s3_region}}"
+          - name: AWS_S3_ADDRESSING_STYLE
+            value: "{{inputs.parameters.aws_addressing_style}}"
         command: [/bin/bash, -lc]
         args:
           - |
             set -euo pipefail
-            # Optional S3 endpoint (for S3-compatible backends)
+            # Optional inline AWS credentials (dev-only fallback if secret not present)
+            [ -n "{{inputs.parameters.aws_access_key_id}}" ] && export AWS_ACCESS_KEY_ID="{{inputs.parameters.aws_access_key_id}}"
+            [ -n "{{inputs.parameters.aws_secret_access_key}}" ] && export AWS_SECRET_ACCESS_KEY="{{inputs.parameters.aws_secret_access_key}}"
+            [ -n "{{inputs.parameters.aws_session_token}}" ] && export AWS_SESSION_TOKEN="{{inputs.parameters.aws_session_token}}"
+
+            # Configure S3 endpoint env for S3-compatible backends (OVH)
             if [ -n "{{inputs.parameters.s3_endpoint}}" ]; then
               export AWS_S3_ENDPOINT="{{inputs.parameters.s3_endpoint}}"
               export AWS_ENDPOINT_URL="{{inputs.parameters.s3_endpoint}}"
             fi
 
-            # Normalize groups: accept comma/space separated; ensure single leading '/'
+            # Build groups flags: accept comma/space-separated values
             GARGS=""
             for g in $(printf '%s' "{{inputs.parameters.groups}}" | tr ',' ' '); do
               [ -z "$g" ] && continue
@@ -112,7 +179,6 @@ spec:
               GARGS="$GARGS --groups $g"
             done
 
-            # Convert using the data-model CLI directly
             set -x
             eopf-geozarr convert \
               "{{inputs.parameters.stac_url}}" \

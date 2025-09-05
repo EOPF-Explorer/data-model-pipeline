@@ -1,0 +1,13 @@
+{
+  "arguments": {
+    "parameters": [
+      { "name": "stac_url", "value": "https://example.invalid/input.zarr" },
+      { "name": "output_zarr", "value": "s3://your-bucket/output/path.zarr" },
+      { "name": "groups", "value": "measurements/reflectance/r20m" },
+      { "name": "s3_endpoint", "value": "https://s3.de.io.cloud.ovh.net" },
+      { "name": "s3_region", "value": "de" },
+      { "name": "aws_addressing_style", "value": "path" },
+      { "name": "overwrite", "value": "true" }
+    ]
+  }
+}
