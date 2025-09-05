@@ -23,7 +23,7 @@ spec:
   dependencies:
     - name: stac-items
       eventSourceName: geozarr-amqp
-    eventName: stac-items
+      eventName: stac-items
   # TODO: set your real RabbitMQ URL and vhost in the EventSource above.
   triggers:
     - template:
