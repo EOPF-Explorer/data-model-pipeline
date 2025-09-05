@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Submit from a WorkflowTemplate and print a clean UI link.
-# Env: SUBMIT_IMAGE, REMOTE_SERVICE_ACCOUNT, PARAMS_FILE, ARGO_REMOTE_SERVER, REMOTE_NAMESPACE
+# Submit a Workflow from a WorkflowTemplate and print a clean UI link.
+#
+# Required env:
+#   SUBMIT_IMAGE            Container image used by the WorkflowTemplate param 'image'
+#   REMOTE_SERVICE_ACCOUNT  ServiceAccount name to run as
+#
+# Optional env:
+#   PARAMS_FILE             JSON file with Argo parameters (default: params.json)
+#   ARGO_REMOTE_SERVER      Argo server URL (fallback default baked below)
+#   REMOTE_NAMESPACE        Target namespace/project (default: devseed)
+#
+# Usage:
+#   scripts/argo_submit_workflow.sh
 
 here="$(cd "$(dirname "$0")" && pwd)"
 
@@ -11,8 +22,8 @@ WF_TEMPLATE="${WF_TEMPLATE:-geozarr-convert}"
 REMOTE_SERVICE_ACCOUNT="${REMOTE_SERVICE_ACCOUNT:-}"
 PARAMS_FILE="${PARAMS_FILE:-params.json}"
 
-[[ -n "${SUBMIT_IMAGE}" ]] || { echo "ERROR: SUBMIT_IMAGE not set" >&2; exit 2; }
-[[ -f "${PARAMS_FILE}" ]] || { echo "ERROR: ${PARAMS_FILE} not found" >&2; exit 2; }
+[[ -n "${SUBMIT_IMAGE}" ]] || { echo "[submit] ERROR: SUBMIT_IMAGE not set" >&2; exit 2; }
+[[ -f "${PARAMS_FILE}" ]] || { echo "[submit] ERROR: ${PARAMS_FILE} not found" >&2; exit 2; }
 
 # Build params flags (only non-empty)
 PARAMS=$(python3 "${here}/params_to_flags.py" "${PARAMS_FILE}")
@@ -24,6 +35,7 @@ if "${here}/argo_remote.sh" submit --help 2>/dev/null | grep -q -- '--output'; t
 fi
 
 # Submit
+echo "[submit] Submitting from template '${WF_TEMPLATE}' with image='${SUBMIT_IMAGE}'..."
 WF_OUT=$("${here}/argo_remote.sh" submit \
   --serviceaccount "${REMOTE_SERVICE_ACCOUNT:-default}" \
   --from workflowtemplate/${WF_TEMPLATE} \
@@ -47,8 +59,8 @@ BASE="${BASE%/}"
 NS_TRIM=$(printf '%s' "${REMOTE_NAMESPACE:-default}" | tr -d '[:space:]')
 
 if [[ -n "${WF_NAME}" ]]; then
-  echo "Workflow: ${WF_NAME}"
-  echo "Open: ${BASE}/workflows/${NS_TRIM}/${WF_NAME}"
+  echo "[submit] Workflow: ${WF_NAME}"
+  echo "[submit] Open: ${BASE}/workflows/${NS_TRIM}/${WF_NAME}"
 else
-  echo "Submitted. Open namespace: ${BASE}/workflows/${NS_TRIM}"
+  echo "[submit] Submitted. Open namespace: ${BASE}/workflows/${NS_TRIM}"
 fi

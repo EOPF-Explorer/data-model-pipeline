@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
-# Create a minimal STAC Item and POST to a STAC API Transactions endpoint.
-# Args: 1) output path  2) href override  3) STAC API base  4) collection  5) bearer  6) s3 endpoint
+# Create a minimal STAC Item and POST to a STAC API Transactions endpoint (experimental/WIP).
+#
+# Usage:
+#   scripts/register.sh <output_path> [href_override] [stac_api_base] [collection] [bearer_token] [s3_endpoint]
+#
+# Args:
+#   output_path     Path that identifies the dataset (e.g., s3://bucket/key or https URL); used to derive ID
+#   href_override   Optional explicit href for the asset (otherwise derived from output_path/s3_endpoint)
+#   stac_api_base   Base URL of the STAC API (e.g., https://api.example.com)
+#   collection      Collection ID to register into
+#   bearer_token    Optional bearer token
+#   s3_endpoint     Optional S3 endpoint to convert s3:// to https href (path/virtual heuristics)
 set -euo pipefail
 
 OUT=${1:?"missing output path"}
@@ -45,7 +55,7 @@ else
   fi
 fi
 
-ITEM_JSON="/data/${ITEM_ID}.item.json"
+ITEM_JSON="/tmp/${ITEM_ID}.item.json"
 
 printf '%s\n' \
   '{' \
@@ -78,6 +88,6 @@ fi
 curl -fsS -X POST "${URL%/}/collections/${COLLECTION}/items" \
   "${HDRS[@]/#/-H }" \
   --data-binary "@${ITEM_JSON}" \
-  -o /data/register-response.json
+  -o /tmp/register-response.json
 
-echo "Registration response saved to /data/register-response.json"
+echo "Registration response saved to /tmp/register-response.json"

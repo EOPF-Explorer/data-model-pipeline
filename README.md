@@ -1,217 +1,187 @@
-# Data Model Pipeline → GeoZarr (Remote Argo)
-
-Run a GeoZarr conversion on a remote Argo Workflows cluster. Two steps: convert → (optional) register. The convert step uses the data‑model CLI directly. Write to PVC (`/data/...`) or directly to `s3://...`.
-
-Future-ready flow (target)
-- 1) Get pointer from RabbitMQ (EODC STAC message) instead of params.json
-- 2) Call the data-model converter directly (no wrapper)
-- 3) Register to external STAC (eoAPI Transactions)
-
-You can run today via params.json; AMQP trigger and eoAPI registration are prepared without breaking current usage.
-
-## Zero-to-first-run (3 steps)
-
-1) Get an Argo UI token [here](https://argo-workflows.hub-eopf-explorer.eox.at/userinfo#:~:text=COPY%20TO%20CLIPBOARD) and export it
-
-```bash
-export ARGO_TOKEN='Bearer <paste-from-UI>'
-```
-
-2) Build+push the image and apply the workflow template
-
-```bash
-make up TAG=dev   # add FORCE=true to rebuild without cache and pull base
-```
-
-3) Submit a run
-
-```bash
-# Use defaults in params.json (good for Sentinel‑2)
-make submit
-
-# Or use a ready-made example file:
-# - Sentinel‑2 resolutions
-make submit PARAMS_FILE=params.s2.json
-# - Sentinel‑1 GRD (groups set to measurements)
-make submit PARAMS_FILE=params.s1.json
-```
-
-Follow logs / open UI:
-
-```bash
-make logs
-make ui
-```
-
-Notes
-- make up = build+push (GHCR) → apply template → submit
-- Set TAG to pick or pin an image (e.g., TAG=v0.1.0). Use FORCE=true to pull+no-cache.
-- For repeat runs without rebuild: use make submit (optionally PARAMS_FILE=…)
-
-## What’s included
-
-- `workflows/geozarr-convert-template.yaml` — WorkflowTemplate (convert → register)
-- `params.json` — default arguments
-- `params.s2.json` — Sentinel‑2 sample
-- `params.s1.json` — Sentinel‑1 GRD sample
-- `Makefile` — publish, template, submit, logs, ui, doctor
-- `docker/Dockerfile` — base image with `eopf-geozarr`
-
-`.work/` is local, ephemeral state.
-
-## AMQP trigger (WiP)
-
-The manifest in `events/amqp-events.yaml` wires RabbitMQ → Argo Workflow submission. Replace the AMQP URL placeholders and apply it. The Sensor maps `eventBody.properties.*` to workflow parameters:
-
-- `properties.href` → `stac_url`
-- `properties.groups` → `groups` (optional)
-- `properties.register_url`, `properties.collection` → registration (optional)
-
-This keeps `make submit` working while enabling event-driven runs.
-
-## Parameter basics
-
-- `stac_url`: STAC/Zarr URL of the input
-- `output_zarr`: where to write the GeoZarr (PVC path or `s3://bucket/key`)
-- `groups` (recommended): space- or comma-separated group paths. Examples:
-  - Sentinel‑2: `/measurements/reflectance/r20m` (or the r10m/r20m/r60m set)
-  - Sentinel‑1 GRD: `/measurements`
-- Registration (optional): `register_url`, `register_collection`, `register_bearer_token`, `register_href`
-- `s3_endpoint`: S3-compatible endpoint (e.g., OVH)
-
-Tips
-
-- Groups are normalized to start with `/`, so both `measurements` and `/measurements` are accepted.
-- For Sentinel‑2, you can explicitly set: `/measurements/reflectance/r20m` (single) or the full set.
-- For Sentinel‑1 GRD, use `measurements` (normalized to `/measurements`) (see `params.s1.json`).
-
-## S3 (OVH or other S3‑compatible)
-
-To write to S3, use an `s3://bucket/key` output and set `s3_endpoint` for non-AWS providers.
-
-Credentials via K8s Secret (namespace: `devseed` by default):
-
-```bash
-kubectl -n devseed create secret generic ovh-s3-creds \
-  --from-literal=AWS_ACCESS_KEY_ID='<ACCESS_KEY>' \
-  --from-literal=AWS_SECRET_ACCESS_KEY='<SECRET_KEY>'
-```
-
-## Common commands
-
-- `make up` — build (optional), apply template, submit
-- `make template` — apply/update the WorkflowTemplate
-- `make submit` — submit using a params file (default: `params.json`)
-- `make logs` — tail latest run
 # GeoZarr conversion pipeline (Argo Workflows)
 
-Convert Zarr datasets (e.g., Sentinel‑2) to GeoZarr on a remote Argo cluster. The workflow is intentionally simple: convert → optional register.
+Convert an input STAC or Zarr dataset to GeoZarr on a remote Argo Workflows cluster and save the result to your S3 bucket. Today the workflow has two steps available: convert (runs today) → register (optional, WIP for STAC Transactions). The RabbitMQ trigger is also WIP.
 
-Related projects
+- S3 direct writes (s3://bucket/key)
+- AWS keys stored in the cluster (Kubernetes Secret)
+- Minimal runtime: eopf-geozarr
 
-- eopf-explorer/data-model (converter library and CLI)
-- EOPF coordination docs (architecture, ADRs): sentinel-zarr-explorer-coordination
+On this page
+- Quickstart
+- Parameters
+- S3 credentials (incl. OVH Swift S3)
+- How it works
+- 3-step flow (roadmap)
+- Cloud/config
+- Troubleshooting
+- Repository layout
 
 ## Quickstart
 
-1) Auth to Argo UI and export a token
+Prereqs (defaults in Makefile)
+- ARGO_REMOTE_SERVER=https://argo-workflows.hub-eopf-explorer.eox.at
+- REMOTE_NAMESPACE=devseed  # your cluster project name
 
+1) Token (one time copy from [Argo user info](https://argo-workflows.hub-eopf-explorer.eox.at/userinfo))
 ```bash
-export ARGO_TOKEN='Bearer <paste-from-UI>'
+export ARGO_TOKEN='Bearer <copy from Argo UI>'
+make token-bootstrap   # writes .work/argo.token
+unset ARGO_TOKEN       # argo wrapper reads .work/argo.token
 ```
 
-2) Apply the workflow template
+2) S3 Secret (required; run once per project)
 
 ```bash
-make template
+export AWS_ACCESS_KEY_ID=...     # see OVH steps below if using OVH
+export AWS_SECRET_ACCESS_KEY=...
+# optional (if issued): export AWS_SESSION_TOKEN=...
+make secret-ovh-s3               # REQUIRED: create/update 'ovh-s3-creds' for REMOTE_NAMESPACE (lets the job write to S3)
 ```
 
-3) Submit using the default params.json (S2 example)
+This stores your storage keys so the job can write to your bucket. Run once.
+
+3) Build/apply/submit
 
 ```bash
-make submit
+# Start from the example (once):
+cp params.example.json params.json
+
+make up          # build+push image, apply template, submit
+# or force rebuild
+make up-force    # rebuild with --pull --no-cache
 ```
 
-Watch logs / open UI
+Resubmit with different params
+
+```bash
+make submit                         # uses params.json
+# or point to another file
+make submit PARAMS_FILE=params.example.json
+```
+
+Follow runs
 
 ```bash
 make logs
 make ui
 ```
 
-## Parameters (minimal)
+## Parameters
 
+Essentials
 - stac_url: Input STAC/Zarr URL
-- output_zarr: Output path (`/data/...` PVC or `s3://bucket/key`)
-- groups: One or more group paths (space/comma separated). Examples:
-  - Sentinel‑2: measurements/reflectance/r20m (single) or add r10m/r60m
-  - Sentinel‑1 GRD: measurements
-- Registration (optional): register_url, register_collection, register_bearer_token, register_href
-- s3_endpoint: S3-compatible endpoint (OVH example provided)
+- output_zarr: S3 path (s3://bucket/key)
+- groups: Space/comma list of group paths (auto-normalized to start with /)
 
-Notes
+S3
+- s3_endpoint: e.g., https://s3.de.io.cloud.ovh.net
+- s3_region: short code (e.g., de)
+- aws_addressing_style: how S3 URLs are formed. 'path' → https://endpoint/bucket/key (use this; works for OVH). 'virtual' → https://bucket.endpoint/key (only if your storage needs it).
+- s3_secret_name: Kubernetes Secret name with AWS creds (default ovh-s3-creds)
+- Inline creds (dev only): aws_access_key_id, aws_secret_access_key, aws_session_token
 
-- Groups are normalized to have a single leading `/`, so both `measurements/...` and `/measurements/...` are fine.
-- The default `params.json` is set to S2 reflectance r20m for a fast first run.
+Registration (optional, WIP — STAC Transactions to eoAPI)
+- register_url, register_collection, register_bearer_token, register_href
 
-## What’s in this repo
+## S3 credentials
 
-- workflows/geozarr-convert-template.yaml — Argo WorkflowTemplate
-- params.json — simple defaults for S2
-- Makefile — template, submit, logs, ui (+ publish/up for custom images)
-- docker/Dockerfile — converter image build (includes eopf-geozarr)
- 
+Create this once per project. Keys needed:
+- AWS_ACCESS_KEY_ID
+- AWS_SECRET_ACCESS_KEY
+- (optional) AWS_SESSION_TOKEN
 
-## S3 (OVH or other S3‑compatible)
-
-For non‑AWS endpoints, set `s3_endpoint` and provide credentials via a Secret (namespace `devseed`):
+Example (manual):
 
 ```bash
 kubectl -n devseed create secret generic ovh-s3-creds \
   --from-literal=AWS_ACCESS_KEY_ID='<ACCESS_KEY>' \
   --from-literal=AWS_SECRET_ACCESS_KEY='<SECRET_KEY>'
+# optional: --from-literal=AWS_SESSION_TOKEN='<SESSION_TOKEN>'
 ```
 
-Publish to OVH example
-- Use `params.ovh.json` with `output_zarr=s3://esa-zarr-sentinel-explorer-fra/...` and `s3_endpoint=https://s3.de.io.cloud.ovh.net`
-- Optionally set region/addressing: `s3_region=de`, `aws_addressing_style=path`
-- Run: `make submit PARAMS_FILE=params.ovh.json`
+Use `s3_secret_name` in params to override the name.
 
-## Common commands
+### OVH (Swift S3 API) — quick setup
 
-- make init — one-time setup (exec bits) + env check
-- make up — build+push image, apply template, submit
-- make template — apply/update the WorkflowTemplate
-- make submit — submit using PARAMS_FILE (default: params.json)
-- make logs — follow latest run; make ui — open namespace UI link
+OVH uses OpenStack Swift with an S3-compatible API.
 
-You can override: GHCR_ORG, GHCR_REPO, TAG, SUBMIT_IMAGE, REMOTE_NAMESPACE, ARGO_REMOTE_SERVER.
+- Prep your env: https://help.ovhcloud.com/csm/en-gb-public-cloud-compute-prepare-openstack-api-environment?id=kb_article_view&sysparm_article=KB0050997
+- Get and source RC file: https://help.ovhcloud.com/csm/en-gb-public-cloud-compute-set-openstack-environment-variables?id=kb_article_view&sysparm_article=KB0050928, then `source openrc.sh`
+- Create S3-style keys: `openstack ec2 credentials create` → copy Access/Secret to `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+- Configure params: set `s3_endpoint` (e.g., `https://s3.de.io.cloud.ovh.net`, `https://s3.gra.io.cloud.ovh.net`) and `s3_region` (`de`, `gra`, `rbx`, `bhs`); keep addressing style `path`
+- Save keys in the cluster:
+  - `export AWS_ACCESS_KEY_ID=...`
+  - `export AWS_SECRET_ACCESS_KEY=...`
+  - optional: `export AWS_SESSION_TOKEN=...`
+  - `make secret-ovh-s3`
 
-## Troubleshooting (quick)
+Docs: https://help.ovhcloud.com/csm/en-gb-public-cloud-storage-pcs-getting-started-swift-s3-api?id=kb_article_view&sysparm_article=KB0047146
 
-- Auth: refresh UI token and export ARGO_TOKEN='Bearer …'
-- Env check: make doctor
-- Template: make template (or make template-force)
-- Logs: make logs (follow @latest)
-- Image pulls: ensure image is public or set imagePullSecret on the template
-- S3: output_zarr=s3://… and s3_endpoint for non‑AWS; create secret ovh-s3-creds with AWS keys
-- Namespace: REMOTE_NAMESPACE must match where Argo + secrets live
+## How it works
 
-## Code pointers
+- Two steps:
+  - convert: runs `eopf-geozarr convert`, writes to S3 using your keys
+  - register (optional, experimental): posts a minimal STAC Item to a STAC Transactions API (e.g., eoAPI); saves response to /tmp/register-response.json
+- Token: `make token-bootstrap` saves a durable token at `.work/argo.token` for the CLI wrapper
+- Image: small container with eopf-geozarr (workflow calls the CLI directly)
 
-- Workflow: workflows/geozarr-convert-template.yaml
-- Events (WiP): events/amqp-events.yaml
-- Scripts: scripts/register.sh
-- Make helpers: Makefile, scripts/argo_*.sh
+## 3-step flow (roadmap)
 
-## Next steps
+Goal: keep the workflow simple, event-driven, and easy to operate.
 
-- Split templates: keep this repo for convert‑only; create a separate register-only template if/when needed.
-- Pin images: use a version tag (e.g., :v0.1.x) for reproducible runs; keep :dev for iteration.
-- Add a tiny smoke test: a public tiny Zarr + CI to validate the WorkflowTemplate syntax.
-- (Optional) Drop s3_endpoint param and rely on AWS_ENDPOINT_URL in the Secret; document once.
-- (Optional) Publish prebuilt images to GHCR with clear tags from data‑model releases.
+1) Get work from a queue (RabbitMQ) — WIP
+- Use Argo Events AMQP source so the workflow subscribes to a RabbitMQ queue.
+- Docs: https://argoproj.github.io/argo-events/eventsources/setup/amqp/
+
+2) Convert
+- Run the data-model's converter directly (`eopf-geozarr convert`).
+- Keep workflow inputs minimal (stac_url, output_zarr, S3 settings).
+
+3) Register to STAC API
+- After a successful convert, POST the Item to a STAC Transactions API.
+- Extension: https://github.com/stac-api-extensions/transaction
+
+Notes
+- Retry: expose a simple retries setting in the workflow (e.g., attempts/backoff) so transient issues can be retried.
+- AOI-facing: an upstream service can search STAC for new items (by area/time) and push IDs/URLs onto the queue.
+- OVH target: choose the S3 bucket/prefix in params (e.g., `output_zarr`), pointing to your OVH endpoint.
+
+## ADR alignment (brief)
+
+- Orchestration: Argo Workflows runs a simple two-step flow (convert → optional register).
+- Scaling: stateless jobs, S3 direct writes, small image.
+- Deployment: secure token bootstrap; storage keys via cluster Secret.
+- GeoZarr: uses the established converter (eopf-geozarr) and parameters.
+- API: optional STAC Transactions registration with clear parameters.
+
+## Cloud/config
+
+- Image: GHCR_ORG, GHCR_REPO, TAG, SUBMIT_IMAGE
+- Build: REMOTE_PLATFORM (linux/amd64), FORCE=true for no-cache
+- Argo: ARGO_REMOTE_SERVER, REMOTE_NAMESPACE, REMOTE_SERVICE_ACCOUNT, ARGO_TLS_INSECURE, ARGO_CA_FILE
+
+Tip: `make env` shows effective values; `make doctor` sanity-checks connectivity and token.
+
+## Troubleshooting
+
+- Token: Ensure `.work/argo.token` exists or set ARGO_TOKEN/ARGO_TOKEN_FILE
+- S3: Use `s3://…` and set `s3_endpoint`/`s3_region`; the Secret must be in the same project you run in
+- Logs: `make logs`; status: `make get`
+
+## Repository layout
+
+- workflows/
+  - geozarr-convert-template.yaml — main workflow (convert → optional register)
+  - bootstrap-argo-token.yaml — creates a durable token used by token-bootstrap
+- scripts/
+  - argo_remote.sh — CLI wrapper (reads token file/env; sets TLS/namespace)
+  - argo_submit_workflow.sh — submits the workflow with your params and prints a UI link
+  - params_to_flags.py — turns params JSON into -p flags
+  - bootstrap_argo_token.sh — saves .work/argo.token
+  - register.sh — helper to POST a STAC Item (WiP)
+- Make targets
+  - init, up, up-force, submit, logs, get, ui, token-bootstrap, secret-ovh-s3, clean
 
 ## License
 
-Apache‑2.0 — see [LICENSE](LICENSE)
+Apache-2.0 — see LICENSE

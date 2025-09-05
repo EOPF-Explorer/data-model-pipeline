@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""
+Read an Argo parameters JSON file and emit '-p name=value' flags for non-empty values.
+
+Usage:
+    python3 scripts/params_to_flags.py params.json
+
+Notes:
+    - Supports either top-level {"parameters": [...]} or {"arguments": {"parameters": [...]}}
+    - Skips empty values so template defaults apply and downstream CLIs don’t see empty strings.
+"""
 import json
 import sys
 import shlex
